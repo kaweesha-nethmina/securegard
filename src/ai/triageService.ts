@@ -1,4 +1,4 @@
-import * as https from "https";
+import * as https from "node:https";
 import { Vulnerability } from "../types";
 
 export type AiProvider = "anthropic" | "gemini" | "groq";
@@ -458,7 +458,8 @@ export function defaultTestFilePath(sourceRelPath: string): string {
   const base = sourceRelPath.slice(sourceRelPath.lastIndexOf("/") + 1).replace(/\.[^.]+$/, "");
   const ext = sourceRelPath.split(".").pop()?.toLowerCase() ?? "";
   if (ext === "py") return `${dir}test_${base}.py`;
-  return `${dir}${base}.test.${ext === "tsx" || ext === "jsx" ? ext : ext === "ts" ? "ts" : ext === "mjs" || ext === "cjs" ? ext : "js"}`;
+  const testExtension = ["tsx", "jsx", "ts", "mjs", "cjs"].includes(ext) ? ext : "js";
+  return `${dir}${base}.test.${testExtension}`;
 }
 
 const TEST_GEN_SYSTEM_PROMPT = `You are a senior software engineer writing unit tests.
@@ -535,7 +536,7 @@ ${opts.styleReference}
   try {
     const parsed = JSON.parse(cleaned);
     testCode = String(parsed.testCode ?? cleaned);
-    if (typeof parsed.testFilePath === "string" && /^[\w./\-]+$/.test(parsed.testFilePath)) {
+    if (typeof parsed.testFilePath === "string" && /^[\w./-]+$/.test(parsed.testFilePath)) {
       testFilePath = parsed.testFilePath;
     }
   } catch {
