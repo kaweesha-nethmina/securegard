@@ -30,10 +30,7 @@ export class SecuGuardCodeLensProvider implements vscode.CodeLensProvider {
         })
       );
       lenses.push(
-        new vscode.CodeLens(range, { title: "Explain", command: "secuguard.explainVulnerability", arguments: [v.id] })
-      );
-      lenses.push(
-        new vscode.CodeLens(range, { title: "Generate Fix", command: "secuguard.generateFix", arguments: [v.id] })
+        new vscode.CodeLens(range, { title: "Explain & Fix", command: "secuguard.explainVulnerability", arguments: [v.id] })
       );
       lenses.push(
         new vscode.CodeLens(range, { title: "Save", command: "secuguard.saveToBacklog", arguments: [v.id] })

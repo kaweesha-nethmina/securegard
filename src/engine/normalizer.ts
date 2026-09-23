@@ -85,6 +85,7 @@ export function normalize(
         linkedTodoId: prior?.linkedTodoId,
         aiExplanation: prior?.aiExplanation,
         aiConfidence: prior?.aiConfidence,
+        aiExploitability: prior?.aiExploitability,
         falsePositiveReason: prior?.falsePositiveReason,
         baseline: prior?.baseline ?? baselineMode,
         statusHistory,

@@ -113,17 +113,16 @@ function renderHtml(vulns: Vulnerability[]): string {
       <td class="mono">${esc(v.file)}:${v.startLine}</td>
       <td>${esc(v.category)}</td>
       <td>
-        <select class="status-select" data-id="${v.id}">
+        <select class="status-select tip" data-id="${v.id}" data-tooltip="Change status of this finding">
           ${["open", "triaged", "todo", "false_positive", "wont_fix", "fixed"]
             .map((s) => `<option value="${s}" ${s === v.status ? "selected" : ""}>${s.replace("_", " ")}</option>`)
             .join("")}
         </select>
       </td>
       <td>
-        <button class="icon-btn" data-action="open" data-id="${v.id}" title="Open in editor">↗</button>
-        <button class="icon-btn" data-action="explain" data-id="${v.id}" title="Explain">💡</button>
-        <button class="icon-btn" data-action="fix" data-id="${v.id}" title="Generate fix">🛠</button>
-        <button class="icon-btn" data-action="showHistory" data-id="${v.id}" title="Status history">🕘</button>
+        <button class="icon-btn tip" data-action="open" data-id="${v.id}" data-tooltip="Open in editor">↗</button>
+        <button class="icon-btn tip" data-action="explain" data-id="${v.id}" data-tooltip="Explain & fix — attack info, AI triage, fix guide">🧠</button>
+        <button class="icon-btn tip" data-action="showHistory" data-id="${v.id}" data-tooltip="View status history">🕘</button>
       </td>
     </tr>`
     )
@@ -198,8 +197,21 @@ function renderHtml(vulns: Vulnerability[]): string {
   .sev-low { background: #58a6ff22; color: #58a6ff; border:1px solid #58a6ff55; }
   .sev-info { background: #8b949e22; color: #8b949e; border:1px solid #8b949e55; }
   .status-select { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font-size: 11px; }
-  .icon-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; cursor:pointer; padding: 3px 7px; margin-right:4px; color: var(--fg); }
+  .icon-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; cursor:pointer; padding: 3px 7px; margin-right:4px; color: var(--fg); position: relative; }
   .icon-btn:hover { border-color: var(--accent); }
+  .tip { position: relative; }
+  .tip::after {
+    content: attr(data-tooltip);
+    position: absolute; bottom: calc(100% + 6px); left: 50%;
+    transform: translateX(-50%);
+    background: var(--vscode-editorWidget-background, #252526);
+    color: var(--vscode-editorWidget-foreground, #cccccc);
+    border: 1px solid var(--vscode-widget-border, #454545);
+    padding: 4px 8px; border-radius: 4px; font-size: 11px; white-space: nowrap;
+    opacity: 0; pointer-events: none; z-index: 10;
+    transition: opacity .12s ease; box-shadow: 0 2px 8px rgba(0,0,0,.3);
+  }
+  .tip:hover::after { opacity: 1; }
   .empty-state { text-align:center; padding: 60px 20px; color: var(--muted); }
   .trend-svg text { fill: var(--muted); font-size: 9px; }
 </style>
@@ -274,9 +286,9 @@ function renderHtml(vulns: Vulnerability[]): string {
         .map((s) => `<option value="${s}">${s.replace("_", " ")}</option>`)
         .join("")}
     </select>
-    <button class="action" id="exportSarif">Export SARIF</button>
-    <button class="action" id="exportMd">Export Markdown</button>
-    <button class="action" id="rescan">Rescan Workspace</button>
+    <button class="action tip" id="exportSarif" data-tooltip="Export findings as a SARIF report file">Export SARIF</button>
+    <button class="action tip" id="exportMd" data-tooltip="Export findings as a Markdown report file">Export Markdown</button>
+    <button class="action tip" id="rescan" data-tooltip="Re-run a full workspace scan to refresh findings">Rescan Workspace</button>
   </div>
 
   ${

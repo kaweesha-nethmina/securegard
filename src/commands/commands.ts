@@ -5,6 +5,7 @@ import { Database } from "../storage/database";
 import { Orchestrator } from "../engine/orchestrator";
 import { StatusHistoryEntry, Vulnerability, VulnStatus } from "../types";
 import { triageVulnerability, AiProvider, PROVIDER_DEFAULTS } from "../ai/triageService";
+import { RULES } from "../rules/rules";
 import { toSarif, toMarkdownReport } from "../utils/sarif";
 import { resolveIdentity, clearIdentityCache } from "../utils/identity";
 import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
@@ -277,6 +278,13 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
     vscode.commands.registerCommand("secuguard.explainVulnerability", async (id?: string) => {
       const v = findVuln(w, id);
       if (!v) return;
+      if (!v.suggestedFix) {
+        const ruleFix = RULES.find((r) => r.id === v.ruleId)?.remediation;
+        if (ruleFix) {
+          w.db.update(v.id, { suggestedFix: ruleFix });
+          refreshAll(w);
+        }
+      }
       if (v.aiExplanation) {
         showExplainPanel(v);
         return;
@@ -293,6 +301,7 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           const result = await triageVulnerability(v, apiKey, aiModel(), aiProvider());
           w.db.update(v.id, {
             aiExplanation: result.explanation,
+            aiExploitability: result.exploitability,
             aiConfidence: result.confidence,
             suggestedFix: result.suggestedFix || v.suggestedFix,
             status: result.isLikelyFalsePositive && v.status === "open" ? v.status : v.status,
@@ -308,34 +317,6 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           vscode.window.showErrorMessage(`SecuGuard AI triage failed: ${e.message}`);
         }
       });
-    })
-  );
-
-  disposables.push(
-    vscode.commands.registerCommand("secuguard.generateFix", async (id?: string) => {
-      const v = findVuln(w, id);
-      if (!v) return;
-      if (v.suggestedFix && !config().get<boolean>("ai.enabled", false)) {
-        vscode.window.showInformationMessage(v.suggestedFix, { modal: true });
-        return;
-      }
-      if (config().get<boolean>("ai.enabled", false)) {
-        const apiKey = await getApiKey(w);
-        if (apiKey) {
-          await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SecuGuard: generating fix…" }, async () => {
-            try {
-const result = await triageVulnerability(v, apiKey, aiModel(), aiProvider());
-              w.db.update(v.id, { suggestedFix: result.suggestedFix, aiExplanation: result.explanation, aiConfidence: result.confidence });
-              refreshAll(w);
-              vscode.window.showInformationMessage(result.suggestedFix, { modal: true });
-            } catch (e: any) {
-              vscode.window.showErrorMessage(`SecuGuard: fix generation failed — ${e.message}`);
-            }
-          });
-          return;
-        }
-      }
-      vscode.window.showInformationMessage(v.suggestedFix || "No fix suggestion available for this rule yet.", { modal: true });
     })
   );
 
@@ -381,9 +362,6 @@ const result = await triageVulnerability(v, apiKey, aiModel(), aiProvider());
           }
           case "explain":
             vscode.commands.executeCommand("secuguard.explainVulnerability", msg.id);
-            break;
-          case "fix":
-            vscode.commands.executeCommand("secuguard.generateFix", msg.id);
             break;
           case "setStatus": {
             const v = w.db.get(msg.id);
@@ -458,20 +436,30 @@ function commentPrefixFor(lang: string): string {
 }
 
 function showExplainPanel(v: Vulnerability) {
-  const panel = vscode.window.createWebviewPanel("secuguardExplain", `Explain: ${v.title}`, vscode.ViewColumn.Beside, {});
+  const panel = vscode.window.createWebviewPanel("secuguardExplain", `Explain & Fix: ${v.title}`, vscode.ViewColumn.Beside, {});
   const esc = (s: string) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
+  // Rule remediation as fallback so stale findings still show a fix guide.
+  const fixGuide = v.suggestedFix || RULES.find((r) => r.id === v.ruleId)?.remediation || "";
+  const fixSection = fixGuide
+    ? `<section class="fix"><h4>Fix guide — how to fix this issue</h4><p>${esc(fixGuide)}</p></section>`
+    : `<section class="fix"><h4>Fix guide</h4><p>No fix suggestion available for this rule yet.</p></section>`;
   panel.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>
     body{font-family:var(--vscode-font-family);padding:20px;line-height:1.5;color:var(--vscode-editor-foreground);background:var(--vscode-editor-background);}
     h2{margin-top:0} .tag{display:inline-block;padding:2px 8px;border-radius:12px;font-size:11px;background:#e9314722;color:#ff6b7d;margin-right:6px}
     pre{background:var(--vscode-textCodeBlock-background,#1e1e1e);padding:10px;border-radius:6px;overflow:auto}
     section{margin-bottom:18px} h4{margin-bottom:4px;color:var(--vscode-descriptionForeground)}
+    .attack{border-left:3px solid #e93147;padding-left:10px}
+    .fix{border-left:3px solid #58a6ff;padding-left:10px}
+    .muted{color:var(--vscode-descriptionForeground);font-size:12px}
   </style></head><body>
     <h2>${esc(v.title)}</h2>
     <div><span class="tag">${esc(v.severity.toUpperCase())}</span><span class="tag">${esc(v.cwe.join(", "))}</span>${v.owasp ? `<span class="tag">${esc(v.owasp)}</span>` : ""}</div>
+    <section class="attack"><h4>Attack — what kind of attack can happen</h4><p>${esc(v.description)}</p>${
+      v.aiExploitability ? `<p class="muted"><b>AI exploitability:</b> ${esc(v.aiExploitability)}</p>` : ""
+    }<p class="muted">CWE: ${esc(v.cwe.join(", "))}${v.owasp ? " · OWASP: " + esc(v.owasp) : ""}</p></section>
+    ${fixSection}
     <section><h4>Location</h4><code>${esc(v.file)}:${v.startLine}</code></section>
-    <section><h4>Description</h4><p>${esc(v.description)}</p></section>
     ${v.aiExplanation ? `<section><h4>AI Triage${typeof v.aiConfidence === "number" ? ` (confidence ${(v.aiConfidence * 100).toFixed(0)}%)` : ""}</h4><p>${esc(v.aiExplanation)}</p></section>` : ""}
     <section><h4>Code</h4><pre>${esc(v.codeSnippet)}</pre></section>
-    ${v.suggestedFix ? `<section><h4>Suggested Fix</h4><p>${esc(v.suggestedFix)}</p></section>` : ""}
   </body></html>`;
 }

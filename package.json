@@ -38,7 +38,7 @@
       },
       {
         "command": "secuguard.explainVulnerability",
-        "title": "SecuGuard: Explain This Vulnerability"
+        "title": "SecuGuard: Explain & Fix This Vulnerability"
       },
       {
         "command": "secuguard.saveToBacklog",
@@ -63,10 +63,6 @@
       {
         "command": "secuguard.reloadFromDisk",
         "title": "SecuGuard: Reload Findings from Disk"
-      },
-      {
-        "command": "secuguard.generateFix",
-        "title": "SecuGuard: Generate Fix"
       },
       {
         "command": "secuguard.exportReport",
@@ -141,11 +137,6 @@
           "command": "secuguard.explainVulnerability",
           "when": "view == secuguard.explorer && viewItem == finding",
           "group": "inline@1"
-        },
-        {
-          "command": "secuguard.generateFix",
-          "when": "view == secuguard.explorer && viewItem == finding",
-          "group": "inline@2"
         },
         {
           "command": "secuguard.saveToBacklog",

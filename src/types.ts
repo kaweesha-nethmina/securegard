@@ -41,6 +41,7 @@ export interface Vulnerability {
   sourceScanner: string;
   aiExplanation?: string;
   aiConfidence?: number; // 0-1
+  aiExploitability?: string; // how an attacker can exploit this (AI triage)
   suggestedFix?: string;
   status: VulnStatus;
   firstDetected: string; // ISO timestamp

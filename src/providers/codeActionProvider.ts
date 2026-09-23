@@ -16,14 +16,10 @@ export class SecuGuardCodeActionProvider implements vscode.CodeActionProvider {
 
     const actions: vscode.CodeAction[] = [];
 
-    const explain = new vscode.CodeAction(`SecuGuard: Explain "${vuln.title}"`, vscode.CodeActionKind.QuickFix);
-    explain.command = { command: "secuguard.explainVulnerability", title: "Explain", arguments: [vuln.id] };
+    const explain = new vscode.CodeAction(`SecuGuard: Explain & fix "${vuln.title}"`, vscode.CodeActionKind.QuickFix);
+    explain.command = { command: "secuguard.explainVulnerability", title: "Explain & Fix", arguments: [vuln.id] };
+    explain.isPreferred = true;
     actions.push(explain);
-
-    const fix = new vscode.CodeAction(`SecuGuard: Generate fix for "${vuln.title}"`, vscode.CodeActionKind.QuickFix);
-    fix.command = { command: "secuguard.generateFix", title: "Generate Fix", arguments: [vuln.id] };
-    fix.isPreferred = true;
-    actions.push(fix);
 
     const suppress = new vscode.CodeAction(`SecuGuard: Suppress with reason…`, vscode.CodeActionKind.QuickFix);
     suppress.command = { command: "secuguard.markFalsePositive", title: "Suppress", arguments: [vuln.id] };

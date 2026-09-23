@@ -35,7 +35,7 @@ AI triage is provider-swappable and is **free** by default via Google Gemini. Th
 1. Set the API key for your chosen provider as an environment variable. The extension reads `process.env`, so export it in your shell (or in a VS Code `launch.json` `env` block for the Extension Development Host — a `.env` file is *not* auto-loaded).
 2. Pick the provider: `secuguard.ai.provider` (`gemini`/`groq`/`anthropic`, default `gemini`). The env var defaults per provider unless you set `secuguard.ai.apiKeyEnvVar`.
 3. Turn on `secuguard.ai.enabled` in Settings.
-4. Click **Explain** or **Generate Fix** on any finding (CodeLens, Quick Fix, Tree View context menu, or the dashboard). Only the flagged snippet + minimal context is sent — never full files.
+4. Click **Explain & Fix** on any finding (CodeLens, Quick Fix, Tree View context menu, or the dashboard). It opens the right-side panel with the attack type, a fix guide, and AI-contextual triage if enabled. Only the flagged snippet + minimal context is sent — never full files.
 
 ### Enable Semgrep for deeper coverage (optional)
 
@@ -55,7 +55,7 @@ git commit -m "chore(secuguard): track vulnerability findings"
 
 **The loop:**
 
-1. Scan / change status as usual (Status dropdown in the dashboard, **Explain**, **Generate Fix**, **Save to Backlog**, **Add as TODO**, **Mark False Positive**, **Mark Fixed**, or the tree-view context menu).
+1. Scan / change status as usual (Status dropdown in the dashboard, **Explain & Fix**, **Save to Backlog**, **Add as TODO**, **Mark False Positive**, **Mark Fixed**, or the tree-view context menu).
 2. Every status change appends an entry to that finding's `statusHistory` (status, `@username`, timestamp, optional note) and is attributed to your GitHub username — resolved from `secuguard.attribution.githubUsername`, then the `gh` CLI, then `git config user.name` (shown as unverified), with a one-time prompt as a last resort. Change it anytime via **SecuGuard: Set GitHub Username**.
 3. Commit the changed files: `git add .secuguard && git commit -m "fix(secuguard): triage SG-xxx as fixed"`.
 
@@ -77,8 +77,7 @@ The dashboard also has a **Status** filter (Active / All / per-status) so you ca
 | `SecuGuard: Scan Workspace` | Full scan across all scanners |
 | `SecuGuard: Scan Current File` | Fast incremental scan (also runs automatically on save) |
 | `SecuGuard: Open Dashboard` | Interactive charts, search/filter, inline status changes |
-| `SecuGuard: Explain This Vulnerability` | Rule explanation, or AI-contextual triage if enabled |
-| `SecuGuard: Generate Fix` | Rule-based remediation guidance, or AI-suggested fix |
+| `SecuGuard: Explain & Fix This Vulnerability` | Opens the right-side panel: attack type, fix guide, and AI-contextual triage if enabled |
 | `SecuGuard: Save to Vulnerability List` | Marks as triaged/tracked |
 | `SecuGuard: Add as TODO` | Inserts a linked `// TODO(security): [SG-xxxx] ...` comment |
 | `SecuGuard: Mark False Positive` | Requires a reason; persisted to `.secuguard/ignore.yml` |
