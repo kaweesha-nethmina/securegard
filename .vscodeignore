@@ -3,8 +3,14 @@ src/**
 test-corpus/**
 node_modules/**
 out/**
-*.map
+**/*.map
 .gitignore
 tsconfig.json
-**/*.ts
-!dist/**
+.github/**
+.env
+.env.*
+.secuguard/**
+**/*.test.*
+**/*.spec.*
+**/tests/**
+**/test/**

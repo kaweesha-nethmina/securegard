@@ -9,7 +9,7 @@ import { RULES } from "../rules/rules";
 import { toSarif, toMarkdownReport, toCsvReport, buildQaReportData, toFinalQaReport, toFinalQaHtmlReport } from "../utils/sarif";
 import { resolveIdentity, clearIdentityCache } from "../utils/identity";
 import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
-import { SecurityExplorerProvider, SummaryProvider } from "../providers/treeViewProvider";
+import { GroupBy, SecurityExplorerProvider, SummaryProvider } from "../providers/treeViewProvider";
 import { SecuGuardCodeLensProvider } from "../providers/codeLensProvider";
 import { DashboardPanel } from "../webview/dashboardPanel";
 import { TestReviewPanel, ReviewTestRow } from "../webview/testReviewPanel";
@@ -388,6 +388,49 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
         placeHolder: "Show findings at or above severity…",
       });
       if (pick) w.explorer.setMinSeverity(pick as any);
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.filterToSeverity", (severity?: string) => {
+      if (severity === "critical" || severity === "high" || severity === "medium" || severity === "low" || severity === "info") {
+        w.explorer.setMinSeverity(severity);
+      }
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.clearSeverityFilter", () => {
+      w.explorer.setMinSeverity("info");
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.groupBy", async () => {
+      const choice = await vscode.window.showQuickPick(
+        [
+          { label: "Category", value: "category" as GroupBy },
+          { label: "Severity", value: "severity" as GroupBy },
+          { label: "File", value: "file" as GroupBy },
+        ],
+        { placeHolder: "Group findings by" }
+      );
+      if (choice) w.explorer.setGroupBy(choice.value);
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.rescanFile", async (file?: string) => {
+      if (typeof file !== "string" || !file) return;
+      await runScan(w, [path.join(w.workspaceRoot, file)], `Rescanning ${path.basename(file)}`);
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.copyFindings", async () => {
+      const markdown = toMarkdownReport(w.explorer.activeVulns());
+      await vscode.env.clipboard.writeText(markdown);
+      vscode.window.showInformationMessage("SecuGuard: active findings copied as Markdown.");
     })
   );
 

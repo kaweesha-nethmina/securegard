@@ -1,23 +1,33 @@
 {
   "name": "secuguard",
-  "displayName": "SecuGuard — Personal QA Engineer",
-  "description": "Embedded security + quality engineer for VS Code: vulnerability scanning, AI triage with Gemini/Groq failover, QA readiness checks, unit-test generation, and final QA reports.",
+  "displayName": "SecuGuard",
+  "description": "Local-first security and QA scanning for VS Code with optional AI triage and report exports.",
   "version": "0.1.0",
-  "publisher": "your-publisher-name",
+  "publisher": "KaweeshaNethmina",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/kaweesha-nethmina/securegard.git"
+  },
+  "bugs": {
+    "url": "https://github.com/kaweesha-nethmina/securegard.git"
+  },
+  "homepage": "https://github.com/kaweesha-nethmina/securegard.git",
   "engines": {
     "vscode": "^1.85.0"
   },
   "categories": [
     "Linters",
+    "Testing",
     "Other"
   ],
   "keywords": [
     "security",
-    "vulnerability",
     "sast",
-    "secrets",
-    "owasp",
-    "cwe"
+    "vulnerability",
+    "qa",
+    "testing",
+    "ai"
   ],
   "activationEvents": [
     "onStartupFinished"
@@ -303,20 +313,17 @@
           "default": "gemini",
           "description": "AI provider used for triage / fix suggestions. Gemini is the free option by default; groq also offers a free tier."
         },
-        "secuguard.ai.apiKeyEnvVar": {
-          "type": "string",
-          "default": "",
-          "description": "Name of the environment variable holding your AI API key. When empty, defaults per provider: GEMINI_API_KEY (gemini), GROQ_API_KEY (groq), ANTHROPIC_API_KEY (anthropic). The key itself is never stored in settings."
-        },
         "secuguard.ai.apiKey": {
           "type": "string",
           "default": "",
-          "description": "Your AI API key (pasted directly). Takes precedence over the environment variable. Stored in VS Code settings (not in the workspace)."
+          "scope": "application",
+          "description": "Your AI API key. Paste it here; the key is stored in user settings only, never in workspace settings."
         },
         "secuguard.ai.fallbackApiKey": {
           "type": "string",
           "default": "",
-          "description": "Fallback provider API key (for quota failover). Stored in VS Code settings."
+          "scope": "application",
+          "description": "Fallback provider API key for quota failover. The key is stored in user settings only, never in workspace settings."
         },
         "secuguard.ai.model": {
           "type": "string",

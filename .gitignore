@@ -4,4 +4,6 @@ out/
 *.vsix
 .DS_Store
 .env
+.env.*
+.secuguard/
 .vscode/launch.local.json
