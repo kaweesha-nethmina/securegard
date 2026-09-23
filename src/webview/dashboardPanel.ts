@@ -436,6 +436,15 @@ function renderOverview(m: DashboardModel): string {
     </div>
   </div>
 
+  <hr class="divider" />
+  <h3>All active findings <span class="hint">${m.active.length} across every category</span></h3>
+  ${listSection(m.active, {
+    title: "No active findings",
+    hint: "Every finding has been fixed, marked false positive or won't fix.",
+    action: "rescan",
+    actionLabel: "🔁 Scan workspace",
+  })}
+
   <textarea class="copy-src" id="summarySrc" readonly hidden>${esc(summarySrc)}</textarea>
 `;
 }
@@ -898,6 +907,7 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
   .chip.active { color: var(--accent); border-color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
   .chip-count { font-size: 10px; opacity: .85; background: var(--border); border-radius: 10px; padding: 0 6px; }
   .chip.active .chip-count { background: color-mix(in srgb, var(--accent) 35%, transparent); }
+  .chip.is-empty { opacity: .4; }
   .dot { width: 9px; height: 9px; border-radius: 50%; display: inline-block; flex: none; }
   /* ---------- cards & stats ---------- */
   .card {
@@ -1194,6 +1204,7 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
     <div class="top-actions">
       <button class="ghost-btn tip" id="densityBtn" data-tooltip="Toggle compact / comfortable rows (d)">↕ Density</button>
       <button class="ghost-btn tip" id="helpBtn" data-tooltip="Keyboard shortcuts (?)">? Help</button>
+      <button class="ghost-btn tip" id="settingsBtn" data-tooltip="Open SecuGuard settings">⚙️ Settings</button>
     </div>
   </header>
 
@@ -1512,9 +1523,12 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
     var section = activeSection();
     var shown = 0;
     var total = 0;
+    var sevTotals = { critical: 0, high: 0, medium: 0, low: 0, info: 0 };
     if (section) {
       section.querySelectorAll("tr.finding-row").forEach(function (tr) {
         total++;
+        var sev = tr.getAttribute("data-severity");
+        if (Object.prototype.hasOwnProperty.call(sevTotals, sev)) sevTotals[sev]++;
         if (!tr.classList.contains("hidden-row")) shown++;
       });
     }
@@ -1522,6 +1536,28 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
     if (count) count.innerHTML = total === 0 ? "" : "<b>" + shown + "</b> of " + total + " shown";
     var clear = document.getElementById("clearFilters");
     if (clear) clear.hidden = !(q || f.sevs.length || f.cat || (onQuality && f.qtype !== "all"));
+    syncSevChips(sevTotals, total);
+  }
+
+  // The chips sit in a filter bar that only ever filters the visible tab, so
+  // their counts must match that tab's rows. The payload ships project-wide
+  // totals (e.g. "All 9" across every category) which would otherwise promise
+  // nine findings while the Security tab only contains three rows.
+  function syncSevChips(sevTotals, total) {
+    document.querySelectorAll("#sevChips .chip[data-sev-toggle]").forEach(function (chip) {
+      var sev = chip.getAttribute("data-sev-toggle") || "";
+      var n = sevTotals[sev] || 0;
+      var badge = chip.querySelector(".chip-count");
+      if (badge) badge.textContent = String(n);
+      chip.setAttribute("data-tooltip", sev + " · " + n + (n === 1 ? " finding" : " findings"));
+      chip.classList.toggle("is-empty", n === 0);
+    });
+    var allChip = document.querySelector("#sevChips .chip[data-sev-clear]");
+    if (allChip) {
+      var allBadge = allChip.querySelector(".chip-count");
+      if (allBadge) allBadge.textContent = String(total);
+      allChip.classList.toggle("is-empty", total === 0);
+    }
   }
 
   function clearFilters() {
@@ -1534,6 +1570,10 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
   function switchTab(tab) {
     if (TABS.indexOf(tab) === -1) tab = "overview";
     state.tab = tab;
+    // Category filters are scoped to one tab's rows. Carrying one across tabs
+    // leaves the new tab with zero matches ("0 of 3 shown") even though it has
+    // findings, so drop it here. Severity/search still carry over safely.
+    state.filters.cat = "";
     document.querySelectorAll(".tab").forEach(function (b) {
       var on = b.getAttribute("data-tab") === tab;
       b.classList.toggle("active", on);
@@ -1542,7 +1582,9 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
     document.querySelectorAll(".tab-section").forEach(function (s) {
       s.hidden = s.id !== "tab-" + tab;
     });
-    var showFilters = tab !== "overview" && tab !== "reports";
+    // Overview now lists every active finding too, so it needs the filter bar;
+    // only Reports has nothing to filter.
+    var showFilters = tab !== "reports";
     var fb = document.getElementById("filterbar");
     if (fb) fb.hidden = !showFilters;
     var qRow = document.getElementById("qualityChipRow");
@@ -1637,9 +1679,11 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
   }
 
   function focusCategory(cat) {
-    state.filters.cat = cat;
     var tab = cat === "quality" ? "quality" : cat === "test-coverage" ? "coverage" : cat === "documentation" ? "docs" : "security";
     switchTab(tab);
+    // Set after switchTab: switching tabs drops a category filter scoped to the
+    // tab we just left, otherwise this would be immediately cleared.
+    state.filters.cat = cat;
     syncChips();
     applyFilters();
     persist();
@@ -1717,6 +1761,7 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
     if (t.closest("#helpOverlay") && !t.closest(".overlay-card")) { toggleHelp(false); return; }
     if (t.closest("#helpBtn") || t.closest("#helpClose")) { toggleHelp(); return; }
     if (t.closest("#densityBtn")) { toggleDensity(); return; }
+    if (t.closest("#settingsBtn")) { vscode.postMessage({ type: "openSettings" }); return; }
 
     var actionEl = t.closest("[data-action]");
     if (actionEl) { handleAction(actionEl); return; }

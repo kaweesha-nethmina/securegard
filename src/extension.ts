@@ -83,7 +83,7 @@ export function activate(context: vscode.ExtensionContext) {
   const orchestrator = new Orchestrator(scanners, db, workspaceRoot);
   const diagnostics = new DiagnosticsProvider();
   const explorer = new SecurityExplorerProvider(db, workspaceRoot);
-  const summary = new SummaryProvider(db);
+  const summary = new SummaryProvider(db, () => explorer.minSeverity);
   const codeLens = new SecuGuardCodeLensProvider(db, workspaceRoot);
   const hover = new SecuGuardHoverProvider(db, workspaceRoot);
   const codeActions = new SecuGuardCodeActionProvider(db, workspaceRoot);

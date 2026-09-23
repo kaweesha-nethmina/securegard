@@ -66,9 +66,12 @@ function fallbackProviderConfig(): { provider: AiProvider | undefined; apiKey: s
   }
   if (fb === primary) fb = undefined;
   if (!fb) return { provider: undefined, apiKey: undefined, model: undefined };
+  // Check settings for fallback API key first, then env var
+  const fallbackKeySetting = config().get<string>("ai.fallbackApiKey", "");
+  const fallbackKey = fallbackKeySetting || process.env[PROVIDER_DEFAULTS[fb].envVar];
   return {
     provider: fb,
-    apiKey: process.env[PROVIDER_DEFAULTS[fb].envVar],
+    apiKey: fallbackKey,
     model: resolveModelForTask("explain", fb, config().get<string>("ai.model", "")),
   };
 }
@@ -185,13 +188,27 @@ async function runScan(w: Wiring, targets: string[], label: string) {
       refreshAll(w, stats);
 
       const newCritical = vulnerabilities.filter((v) => v.severity === "critical" && v.status === "open").length;
-      if (newCritical > 0) {
-        vscode.window.showWarningMessage(`SecuGuard found ${newCritical} CRITICAL issue(s). Open the Security Explorer to review.`);
-      } else {
-        vscode.window.showInformationMessage(`SecuGuard scan complete: ${vulnerabilities.length} active finding(s).`);
-      }
+      const openSettings = "Open settings";
+      const openDashboard = "Open dashboard";
+      const message =
+        newCritical > 0
+          ? `SecuGuard found ${newCritical} CRITICAL issue(s). Open the Security Explorer to review.`
+          : `SecuGuard scan complete: ${vulnerabilities.length} active finding(s).`;
+      // Post-scan notification doubles as a shortcut into settings, so a scan
+      // never leaves the user without a way to reach configuration.
+      vscode.window
+        .showInformationMessage(message, openDashboard, openSettings)
+        .then((choice) => {
+          if (choice === openSettings) openSecuGuardSettings();
+          else if (choice === openDashboard) void vscode.commands.executeCommand("secuguard.openDashboard");
+        });
     }
   );
+}
+
+/** Opens the SecuGuard settings page (scoped to `secuguard.*`). */
+function openSecuGuardSettings(): void {
+  void vscode.commands.executeCommand("workbench.action.openSettings", "secuguard");
 }
 
 function findVuln(w: Wiring, id: string | undefined): Vulnerability | undefined {
@@ -241,10 +258,12 @@ async function getApiKey(w: Wiring): Promise<string | undefined> {
   const provider = aiProvider();
   const info = PROVIDER_DEFAULTS[provider];
   const envVar = aiApiKeyEnvVar();
-  const key = process.env[envVar];
+  // First check VS Code setting for apiKey directly
+  const settingsKey = config().get<string>("ai.apiKey", "");
+  const key = settingsKey || process.env[envVar];
   if (!key) {
     const choice = await vscode.window.showWarningMessage(
-      `SecuGuard ${provider} triage needs the ${envVar} environment variable set (or set \`secuguard.ai.apiKeyEnvVar\`). Get a free key: ${info.signupUrl}`,
+      `SecuGuard ${provider} triage needs the ${envVar} environment variable set (or set \`secuguard.ai.apiKey\` in settings). Get a free key: ${info.signupUrl}`,
       "Open Settings",
       "Get API key"
     );
@@ -791,6 +810,9 @@ Checklist passing: ${data.checklist.filter((c) => c.ok).length}/${data.checklist
             break;
           case "rescan":
             vscode.commands.executeCommand("secuguard.scanWorkspace");
+            break;
+          case "openSettings":
+            openSecuGuardSettings();
             break;
         }
       });
