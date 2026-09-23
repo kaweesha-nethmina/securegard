@@ -112,14 +112,12 @@ function renderHtml(vulns: Vulnerability[]): string {
       </td>
       <td class="mono">${esc(v.file)}:${v.startLine}</td>
       <td>${esc(v.category)}</td>
-      <td>
+      <td class="actions-cell">
         <select class="status-select tip" data-id="${v.id}" data-tooltip="Change status of this finding">
           ${["open", "triaged", "todo", "false_positive", "wont_fix", "fixed"]
             .map((s) => `<option value="${s}" ${s === v.status ? "selected" : ""}>${s.replace("_", " ")}</option>`)
             .join("")}
         </select>
-      </td>
-      <td>
         <button class="icon-btn tip" data-action="open" data-id="${v.id}" data-tooltip="Open in editor">↗</button>
         <button class="icon-btn tip" data-action="explain" data-id="${v.id}" data-tooltip="Explain & fix — attack info, AI triage, fix guide">🧠</button>
         <button class="icon-btn tip" data-action="showHistory" data-id="${v.id}" data-tooltip="View status history">🕘</button>
@@ -197,6 +195,7 @@ function renderHtml(vulns: Vulnerability[]): string {
   .sev-low { background: #58a6ff22; color: #58a6ff; border:1px solid #58a6ff55; }
   .sev-info { background: #8b949e22; color: #8b949e; border:1px solid #8b949e55; }
   .status-select { background: var(--card); color: var(--fg); border: 1px solid var(--border); border-radius: 5px; padding: 3px 6px; font-size: 11px; }
+  .actions-cell { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
   .icon-btn { background: transparent; border: 1px solid var(--border); border-radius: 5px; cursor:pointer; padding: 3px 7px; margin-right:4px; color: var(--fg); position: relative; }
   .icon-btn:hover { border-color: var(--accent); }
   .tip { position: relative; }
@@ -295,7 +294,7 @@ function renderHtml(vulns: Vulnerability[]): string {
     vulns.length === 0
       ? `<div class="empty-state">✅ No findings yet. Run <b>SecuGuard: Scan Workspace</b> to check for vulnerabilities.</div>`
       : `<table>
-    <thead><tr><th>Severity</th><th>Finding</th><th>Location</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Severity</th><th>Finding</th><th>Location</th><th>Category</th><th>Status & Actions</th></tr></thead>
     <tbody id="rows">${rows}</tbody>
   </table>`
   }
