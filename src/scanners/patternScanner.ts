@@ -92,6 +92,7 @@ function walk(dir: string, excludeGlobs: string[], out: string[]): void {
 
 function shouldExclude(fullPath: string, globs: string[]): boolean {
   const normalized = fullPath.split(path.sep).join("/");
+  if (normalized.includes("/.secuguard/")) return true; // never scan SecuGuard's own data dir
   return globs.some((g) => {
     const core = g.replace(/^\*\*\//, "").replace(/\/\*\*$/, "").replace(/\*/g, "");
     return core.length > 0 && normalized.includes(core);
@@ -115,7 +116,7 @@ export class PatternScanner implements ScannerAdapter {
       if (!stat) continue;
       if (stat.isDirectory()) {
         walk(p, this.excludeGlobs, files);
-      } else {
+      } else if (!p.split(path.sep).join("/").includes("/.secuguard/")) {
         files.push(p);
       }
     }

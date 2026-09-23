@@ -221,10 +221,11 @@
             "**/dist/**",
             "**/build/**",
             "**/.git/**",
+            "**/.secuguard/**",
             "**/test-fixtures/**",
             "**/*.min.js"
           ],
-          "description": "Glob patterns excluded from scanning."
+          "description": "Glob patterns excluded from scanning. SecuGuard's own data directory (.secuguard/) is always excluded."
         },
         "secuguard.useSemgrepIfAvailable": {
           "type": "boolean",

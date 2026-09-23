@@ -53,6 +53,7 @@ export class Database {
     this.cache = new Map();
     this.migrateLegacyDb();
     if (!this.meta) this.meta = this.loadMeta();
+    this.pruneSelfFindings();
     this.loadFindingsFromDisk();
   }
 
@@ -153,6 +154,26 @@ export class Database {
 
   private writeFindingFile(v: Vulnerability): void {
     fs.writeFileSync(this.findingPath(v.id), stringifyStable(v), "utf8");
+  }
+
+  /**
+   * Delete finding files that reference SecuGuard's own data dir
+   * (.secuguard/findings/*.json). These are feedback-loop artifacts produced
+   * when an older version scanned its own output; they are never legit findings.
+   */
+  private pruneSelfFindings(): void {
+    for (const f of fs.readdirSync(this.findingsDir)) {
+      if (!f.endsWith(".json")) continue;
+      const p = path.join(this.findingsDir, f);
+      try {
+        const v = JSON.parse(fs.readFileSync(p, "utf8")) as Vulnerability;
+        if (v.file && v.file.startsWith(".secuguard/")) {
+          fs.unlinkSync(p);
+        }
+      } catch {
+        // ignore unreadable/invalid files
+      }
+    }
   }
 
   private loadFindingsFromDisk(): void {

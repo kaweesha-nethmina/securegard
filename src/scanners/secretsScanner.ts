@@ -87,6 +87,7 @@ function walk(dir: string, excludeGlobs: string[], out: string[]): void {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     const normalized = full.split(path.sep).join("/");
+    if (normalized.includes("/.secuguard/")) continue; // never scan SecuGuard's own data dir
     if (excludeGlobs.some((g) => normalized.includes(g.replace(/^\*\*\//, "").replace(/\/\*\*$/, "").replace(/\*/g, "")))) {
       continue;
     }
@@ -110,7 +111,7 @@ export class SecretsScanner implements ScannerAdapter {
       if (!fs.existsSync(p)) continue;
       const stat = fs.statSync(p);
       if (stat.isDirectory()) walk(p, this.excludeGlobs, files);
-      else files.push(p);
+      else if (!p.split(path.sep).join("/").includes("/.secuguard/")) files.push(p);
     }
     const findings: RawFinding[] = [];
     for (const f of files) {
