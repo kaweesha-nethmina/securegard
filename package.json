@@ -1,0 +1,246 @@
+{
+  "name": "secuguard",
+  "displayName": "SecuGuard — Security Vulnerability Detector",
+  "description": "Embedded security QA engineer for VS Code: finds vulnerabilities, explains exploitability, tracks remediation.",
+  "version": "0.1.0",
+  "publisher": "your-publisher-name",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Other"
+  ],
+  "keywords": [
+    "security",
+    "vulnerability",
+    "sast",
+    "secrets",
+    "owasp",
+    "cwe"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./dist/extension.js",
+  "icon": "resources/icon.png",
+  "contributes": {
+    "commands": [
+      {
+        "command": "secuguard.scanWorkspace",
+        "title": "SecuGuard: Scan Workspace",
+        "icon": "$(search)"
+      },
+      {
+        "command": "secuguard.scanCurrentFile",
+        "title": "SecuGuard: Scan Current File",
+        "icon": "$(file-code)"
+      },
+      {
+        "command": "secuguard.explainVulnerability",
+        "title": "SecuGuard: Explain This Vulnerability"
+      },
+      {
+        "command": "secuguard.saveToBacklog",
+        "title": "SecuGuard: Save to Vulnerability List"
+      },
+      {
+        "command": "secuguard.addTodo",
+        "title": "SecuGuard: Add as TODO"
+      },
+      {
+        "command": "secuguard.markFalsePositive",
+        "title": "SecuGuard: Mark False Positive"
+      },
+      {
+        "command": "secuguard.generateFix",
+        "title": "SecuGuard: Generate Fix"
+      },
+      {
+        "command": "secuguard.exportReport",
+        "title": "SecuGuard: Export Report (SARIF/MD/JSON)"
+      },
+      {
+        "command": "secuguard.openDashboard",
+        "title": "SecuGuard: Open Dashboard",
+        "icon": "$(dashboard)"
+      },
+      {
+        "command": "secuguard.refreshTree",
+        "title": "SecuGuard: Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "secuguard.clearBaseline",
+        "title": "SecuGuard: Clear Baseline / Reset"
+      },
+      {
+        "command": "secuguard.filterBySeverity",
+        "title": "SecuGuard: Filter by Severity",
+        "icon": "$(filter)"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "secuguard",
+          "title": "SecuGuard",
+          "icon": "resources/shield.svg"
+        }
+      ]
+    },
+    "views": {
+      "secuguard": [
+        {
+          "id": "secuguard.explorer",
+          "name": "Security Explorer"
+        },
+        {
+          "id": "secuguard.summary",
+          "name": "Summary"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "secuguard.scanWorkspace",
+          "when": "view == secuguard.explorer",
+          "group": "navigation@1"
+        },
+        {
+          "command": "secuguard.openDashboard",
+          "when": "view == secuguard.explorer",
+          "group": "navigation@2"
+        },
+        {
+          "command": "secuguard.filterBySeverity",
+          "when": "view == secuguard.explorer",
+          "group": "navigation@3"
+        },
+        {
+          "command": "secuguard.refreshTree",
+          "when": "view == secuguard.explorer",
+          "group": "navigation@4"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "secuguard.explainVulnerability",
+          "when": "view == secuguard.explorer && viewItem == finding",
+          "group": "inline@1"
+        },
+        {
+          "command": "secuguard.generateFix",
+          "when": "view == secuguard.explorer && viewItem == finding",
+          "group": "inline@2"
+        },
+        {
+          "command": "secuguard.saveToBacklog",
+          "when": "view == secuguard.explorer && viewItem == finding"
+        },
+        {
+          "command": "secuguard.addTodo",
+          "when": "view == secuguard.explorer && viewItem == finding"
+        },
+        {
+          "command": "secuguard.markFalsePositive",
+          "when": "view == secuguard.explorer && viewItem == finding"
+        }
+      ],
+      "editor/context": [
+        {
+          "command": "secuguard.scanCurrentFile",
+          "group": "secuguard"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "secuguard.scanWorkspace"
+        },
+        {
+          "command": "secuguard.scanCurrentFile"
+        },
+        {
+          "command": "secuguard.openDashboard"
+        },
+        {
+          "command": "secuguard.exportReport"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "SecuGuard",
+      "properties": {
+        "secuguard.scanOnSave": {
+          "type": "boolean",
+          "default": true,
+          "description": "Run an incremental scan on the current file every time it is saved."
+        },
+        "secuguard.severityThreshold": {
+          "type": "string",
+          "enum": [
+            "info",
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "default": "low",
+          "description": "Minimum severity shown in the Problems panel and Security Explorer."
+        },
+        "secuguard.excludeGlobs": {
+          "type": "array",
+          "default": [
+            "**/node_modules/**",
+            "**/dist/**",
+            "**/build/**",
+            "**/.git/**",
+            "**/test-fixtures/**",
+            "**/*.min.js"
+          ],
+          "description": "Glob patterns excluded from scanning."
+        },
+        "secuguard.useSemgrepIfAvailable": {
+          "type": "boolean",
+          "default": true,
+          "description": "Shell out to a locally installed Semgrep binary for deeper multi-language coverage, if found on PATH."
+        },
+        "secuguard.ai.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable AI-assisted triage (sends only the flagged snippet + minimal context, never full files, to the configured model)."
+        },
+        "secuguard.ai.apiKeyEnvVar": {
+          "type": "string",
+          "default": "ANTHROPIC_API_KEY",
+          "description": "Name of the environment variable holding your Anthropic API key. The key itself is never stored in settings."
+        },
+        "secuguard.ai.model": {
+          "type": "string",
+          "default": "claude-sonnet-4-6",
+          "description": "Model used for AI triage / fix suggestions."
+        },
+        "secuguard.baselineOnFirstRun": {
+          "type": "boolean",
+          "default": true,
+          "description": "Mark all findings from the very first scan as pre-existing backlog instead of new alerts."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run build",
+    "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
+    "watch": "npm run build -- --watch",
+    "compile-check": "tsc --noEmit",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.28.2",
+    "typescript": "^5.4.0"
+  }
+}
