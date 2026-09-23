@@ -29,6 +29,8 @@ function config() {
   return vscode.workspace.getConfiguration("secuguard");
 }
 
+let extensionUri: vscode.Uri | undefined;
+
 function aiProvider(): AiProvider {
   const p = config().get<string>("ai.provider", "gemini");
   return p === "anthropic" || p === "groq" || p === "gemini" ? p : "gemini";
@@ -147,6 +149,7 @@ async function getApiKey(w: Wiring): Promise<string | undefined> {
 
 export function registerCommands(w: Wiring): vscode.Disposable[] {
   const disposables: vscode.Disposable[] = [];
+  extensionUri = w.context.extensionUri;
 
   disposables.push(
     vscode.commands.registerCommand("secuguard.scanWorkspace", async () => {
@@ -451,6 +454,7 @@ function commentPrefixFor(lang: string): string {
 
 function showExplainPanel(v: Vulnerability) {
   const panel = vscode.window.createWebviewPanel("secuguardExplain", `Explain & Fix: ${v.title}`, vscode.ViewColumn.Beside, {});
+  if (extensionUri) panel.iconPath = vscode.Uri.joinPath(extensionUri, "resources", "shield.svg");
   const esc = (s: string) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
   // Rule remediation as fallback so stale findings still show a fix guide.
   const fixGuide = v.suggestedFix || RULES.find((r) => r.id === v.ruleId)?.remediation || "";

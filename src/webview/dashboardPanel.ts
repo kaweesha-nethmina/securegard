@@ -22,6 +22,7 @@ export class DashboardPanel {
       enableScripts: true,
       retainContextWhenHidden: true,
     });
+    panel.iconPath = vscode.Uri.joinPath(context.extensionUri, "resources", "shield.svg");
     DashboardPanel.current = new DashboardPanel(panel, getVulns, workspaceRoot, onMessage);
   }
 
