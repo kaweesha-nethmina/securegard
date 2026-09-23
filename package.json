@@ -104,11 +104,6 @@
         "command": "secuguard.filterBySeverity",
         "title": "SecuGuard: Filter by Severity",
         "icon": "$(filter)"
-      },
-      {
-        "command": "secuguard.qaReadinessCheck",
-        "title": "SecuGuard: QA Readiness Check",
-        "icon": "$(checklist)"
       }
     ],
     "viewsContainers": {
@@ -137,11 +132,6 @@
         {
           "command": "secuguard.scanWorkspace",
           "when": "view == secuguard.explorer",
-          "group": "navigation@1"
-        },
-        {
-          "command": "secuguard.qaReadinessCheck",
-          "when": "view == secuguard.summary || view == secuguard.explorer",
           "group": "navigation@1"
         },
         {
@@ -202,9 +192,6 @@
       "commandPalette": [
         {
           "command": "secuguard.scanWorkspace"
-        },
-        {
-          "command": "secuguard.qaReadinessCheck"
         },
         {
           "command": "secuguard.generateAllTests"
@@ -364,11 +351,6 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the documentation scanner (flags exported symbols without JSDoc/docstrings)."
-        },
-        "secuguard.readinessCheck.baseBranch": {
-          "type": "string",
-          "default": "main",
-          "description": "Base branch compared against for the QA Readiness Check (`git diff --name-only <base>`)."
         }
       }
     }

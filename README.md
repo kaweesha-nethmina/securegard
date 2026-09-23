@@ -58,15 +58,15 @@ Press **F5** in VS Code (with this folder open) to launch an Extension Developme
 **QA Health Score** (0–100, tooltip explains the formula): starts at 100; −10 critical, −6 high, −3 medium, −1 low, −0.5 info; −3 oversized functions; −1 deep nesting/debug; −0.5 missing tests; −0.25 missing docs; clamped at 0.
 
 ### 2. QA Readiness Check (pre-PR gate)
-**SecuGuard: QA Readiness Check** scans the **entire workspace** (so the QA section — Quality / Test Coverage / Documentation — always reflects the whole project, not just the files being committed), then diffs your working tree against the base branch (`secuguard.readinessCheck.baseBranch`, default `main`, falling back to `git diff --name-only HEAD`) to show a 5-row ✅/❌ checklist for the *new* changes:
+**SecuGuard: QA Readiness Check** scans the **entire workspace** and gates on the **whole project's** QA state (not just the files being committed). It diffs your working tree against the base branch (`secuguard.readinessCheck.baseBranch`, default `main`, falling back to `git diff --name-only HEAD`) to show how many files this change touches, then reports a 5-row ✅/❌ checklist evaluated across all active findings:
 
-1. No **new** critical/high findings
-2. No **new** TODO/FIXME/HACK markers
-3. Every **new** exported symbol has a test
-4. No **new** debug statements
-5. No **new** functions past the max-lines threshold
+1. No critical/high severity findings (project-wide)
+2. No TODO/FIXME/HACK markers (project-wide)
+3. Every exported symbol has a test (project-wide)
+4. No debug statements (project-wide)
+5. No functions past the max-lines threshold (project-wide)
 
-Below the diff-scoped checklist, a **Project-wide QA state** card shows the full results of the whole-workspace scan (files scanned, scan time, and active findings per category) with an **Open QA Dashboard** shortcut. Rows expand with click-to-jump items and there's a **Copy as PR comment** button — a ready-to-paste GitHub/PR comment listing the change-scoped checks plus the project-wide QA summary:
+A **Project-wide QA state** card shows per-category counts with an **Open QA Dashboard** shortcut, and **Copy as PR comment** produces a ready-to-paste GitHub/PR comment with the full checklist:
 
 ```
 ## 🛡 SecuGuard QA Readiness ❌ FAIL

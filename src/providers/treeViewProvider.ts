@@ -210,13 +210,6 @@ export class SummaryProvider implements vscode.TreeDataProvider<vscode.TreeItem>
       items.push(new vscode.TreeItem("No findings yet — run a scan"));
     }
 
-    const readiness = new vscode.TreeItem("Run QA Readiness Check", vscode.TreeItemCollapsibleState.None);
-    readiness.iconPath = new vscode.ThemeIcon("checklist");
-    readiness.description = "pre-PR gate";
-    readiness.command = { command: "secuguard.qaReadinessCheck", title: "QA Readiness Check" };
-    readiness.contextValue = "actionItem";
-    items.push(readiness);
-
     const genTests = new vscode.TreeItem("Generate Missing Tests", vscode.TreeItemCollapsibleState.None);
     genTests.iconPath = new vscode.ThemeIcon("beaker");
     genTests.command = { command: "secuguard.generateAllTests", title: "Generate Missing Tests" };

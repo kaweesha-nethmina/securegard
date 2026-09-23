@@ -12,9 +12,7 @@ import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
 import { SecurityExplorerProvider, SummaryProvider } from "../providers/treeViewProvider";
 import { SecuGuardCodeLensProvider } from "../providers/codeLensProvider";
 import { DashboardPanel } from "../webview/dashboardPanel";
-import { ReadinessPanel } from "../webview/readinessPanel";
 import { TestReviewPanel, ReviewTestRow } from "../webview/testReviewPanel";
-import { runReadinessCheck, buildPrComment } from "../engine/readiness";
 import { isTestFile } from "../scanners/shared/exportedSymbols";
 
 export interface Wiring {
@@ -639,51 +637,6 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           }
         }
       });
-    })
-  );
-
-  disposables.push(
-    vscode.commands.registerCommand("secuguard.qaReadinessCheck", async () => {
-      await vscode.window.withProgress(
-        { location: vscode.ProgressLocation.Notification, title: "SecuGuard: scanning entire workspace for QA readiness…", cancellable: false },
-        async () => {
-          const start = Date.now();
-          const report = await runReadinessCheck(w.workspaceRoot, w.orchestrator, config());
-          const duration = Date.now() - start;
-          const identity = await resolveIdentity(w.context, w.workspaceRoot);
-          if (report.notGitRepo) {
-            vscode.window.showWarningMessage(
-              "SecuGuard: not a git repository (or git is unavailable) — readiness check skipped. Run it from a git worktree."
-            );
-          }
-          w.db.addAuditEntry(
-            "qa_readiness",
-            `QA readiness check (base ${report.baseBranch}, ${report.changedFiles.length} changed file(s), entire workspace scanned${report.projectWide ? ` (${report.projectWide.filesScanned} files)` : ""}, ${duration}ms, ${report.checks.filter((c) => c.ok).length}/${report.checks.length} checks passed)`,
-            identity.username
-          );
-          ReadinessPanel.show(w.context, report, async (msg) => {
-            switch (msg.type) {
-              case "copy": {
-                vscode.env.clipboard.writeText(buildPrComment(report, duration));
-                vscode.window.showInformationMessage("SecuGuard: PR comment copied to clipboard.");
-                break;
-              }
-              case "open": {
-                const doc = await vscode.workspace.openTextDocument(path.join(w.workspaceRoot, msg.file));
-                vscode.window.showTextDocument(doc, { selection: new vscode.Range(msg.line - 1, 0, msg.line - 1, 0) });
-                break;
-              }
-              case "openDashboard":
-            vscode.commands.executeCommand("secuguard.openDashboard");
-            break;
-          case "generateMissingTests":
-                vscode.commands.executeCommand("secuguard.generateAllTests");
-                break;
-            }
-          });
-          refreshAll(w);
-        }
-      );
     })
   );
 
