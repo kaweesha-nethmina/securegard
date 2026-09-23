@@ -10,7 +10,7 @@ An embedded security QA engineer for VS Code: scans your workspace across langua
 - **AI triage** (`src/ai/triageService.ts`, opt-in) — sends only the flagged snippet (never full files) to Claude for a contextual exploitability assessment, confidence score, and suggested fix. Prompt-injection-resistant: code is explicitly framed as data, not instructions.
 - **Full VS Code UI**: Problems panel diagnostics, a "Security Explorer" tree view (Severity → File → Finding), inline CodeLens actions, hover explanations, Quick Fix actions (`Ctrl+.`), and an interactive HTML dashboard (charts, search, filters, inline status changes) — all built with a modern, VS Code–theme-aware design and zero external CDN dependencies.
 - **Lifecycle management**: Save to backlog, insert a linked `// TODO(security): ...` comment, or suppress with a required reason (written to `.secuguard/ignore.yml` so the team can see *why*).
-- **SARIF / Markdown / JSON export** for CI, GitHub/GitLab security tabs, or sharing with a team.
+- **Report export (one button, pick the type)**: professional Security-QA **Markdown**, spreadsheet-friendly **CSV**, **SARIF**, or **JSON** for CI, GitHub/GitLab security tabs, or sharing with a team.
 - **Local-first, team-shared**: everything is stored in `.secuguard/` — one small JSON file per finding (`findings/<id>.json`), plus `meta.json` and an append-only `audit-log.ndjson`. Commit the folder so teammates see the same findings and status history. No code leaves your machine unless you explicitly enable AI triage — and even then only the flagged snippet is sent, not the file.
 
 ## Getting started
@@ -84,7 +84,7 @@ The dashboard also has a **Status** filter (Active / All / per-status) so you ca
 | `SecuGuard: Mark Fixed` | Attribute and record that a finding is fixed |
 | `SecuGuard: Reload Findings from Disk` | Re-read `.secuguard/findings/` after a `git pull` (also auto-watched) |
 | `SecuGuard: Set GitHub Username` | Change the username used to attribute status changes |
-| `SecuGuard: Export Report` | SARIF / Markdown / JSON |
+| `SecuGuard: Export Report` | One export — asks for the type: Markdown QA report / CSV / SARIF / JSON |
 
 ## Architecture
 

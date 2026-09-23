@@ -6,7 +6,7 @@ import { Orchestrator } from "../engine/orchestrator";
 import { StatusHistoryEntry, Vulnerability, VulnStatus } from "../types";
 import { triageVulnerability, AiProvider, PROVIDER_DEFAULTS } from "../ai/triageService";
 import { RULES } from "../rules/rules";
-import { toSarif, toMarkdownReport } from "../utils/sarif";
+import { toSarif, toMarkdownReport, toCsvReport } from "../utils/sarif";
 import { resolveIdentity, clearIdentityCache } from "../utils/identity";
 import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
 import { SecurityExplorerProvider, SummaryProvider } from "../providers/treeViewProvider";
@@ -322,24 +322,41 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
 
   disposables.push(
     vscode.commands.registerCommand("secuguard.exportReport", async () => {
-      const format = await vscode.window.showQuickPick(["SARIF (.sarif)", "Markdown (.md)", "JSON (.json)"], {
-        placeHolder: "Export format",
-      });
+      const format = await vscode.window.showQuickPick(
+        ["Markdown report (.md)", "CSV (spreadsheet) (.csv)", "SARIF (.sarif)", "JSON (.json)"],
+        { placeHolder: "Export format" }
+      );
       if (!format) return;
       const vulns = w.db.getAll();
       let content: string;
       let defaultName: string;
-      if (format.startsWith("SARIF")) {
+      let filters: { [k: string]: string[] };
+      if (format.startsWith("Markdown")) {
+        content = toMarkdownReport(vulns);
+        defaultName = "secuguard-security-qa-report.md";
+        filters = { Markdown: ["md"] };
+      } else if (format.startsWith("CSV")) {
+        content = toCsvReport(vulns);
+        defaultName = "secuguard-security-qa-report.csv";
+        filters = { "CSV (spreadsheet)": ["csv"] };
+      } else if (format.startsWith("SARIF")) {
         content = JSON.stringify(toSarif(vulns, "0.1.0"), null, 2);
         defaultName = "secuguard-report.sarif";
-      } else if (format.startsWith("Markdown")) {
-        content = toMarkdownReport(vulns);
-        defaultName = "secuguard-report.md";
+        filters = { SARIF: ["sarif"] };
       } else {
         content = JSON.stringify(vulns, null, 2);
         defaultName = "secuguard-report.json";
+        filters = { JSON: ["json"] };
       }
-      const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(w.workspaceRoot, defaultName)) });
+      // Default to the active editor's folder so exports land where the user is working.
+      const defaultDir = vscode.window.activeTextEditor
+        ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+        : w.workspaceRoot;
+      const uri = await vscode.window.showSaveDialog({
+        defaultUri: vscode.Uri.file(path.join(defaultDir, defaultName)),
+        filters,
+        saveLabel: "Save SecuGuard report",
+      });
       if (!uri) return;
       fs.writeFileSync(uri.fsPath, content, "utf8");
       const exportIdentity = await resolveIdentity(w.context, w.workspaceRoot);
@@ -376,10 +393,7 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
             if (v) showHistoryQuickPick(v);
             break;
           }
-          case "exportSarif":
-            vscode.commands.executeCommand("secuguard.exportReport");
-            break;
-          case "exportMd":
+          case "export":
             vscode.commands.executeCommand("secuguard.exportReport");
             break;
           case "rescan":

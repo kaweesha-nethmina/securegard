@@ -285,8 +285,7 @@ function renderHtml(vulns: Vulnerability[]): string {
         .map((s) => `<option value="${s}">${s.replace("_", " ")}</option>`)
         .join("")}
     </select>
-    <button class="action tip" id="exportSarif" data-tooltip="Export findings as a SARIF report file">Export SARIF</button>
-    <button class="action tip" id="exportMd" data-tooltip="Export findings as a Markdown report file">Export Markdown</button>
+    <button class="action tip" id="export" data-tooltip="Export findings as a report (Markdown / CSV / SARIF / JSON)">Export Report</button>
     <button class="action tip" id="rescan" data-tooltip="Re-run a full workspace scan to refresh findings">Rescan Workspace</button>
   </div>
 
@@ -339,8 +338,7 @@ function renderHtml(vulns: Vulnerability[]): string {
       vscode.postMessage({ type: 'setStatus', id: sel.dataset.id, status: sel.value });
     });
   });
-  document.getElementById('exportSarif')?.addEventListener('click', () => vscode.postMessage({ type: 'exportSarif' }));
-  document.getElementById('exportMd')?.addEventListener('click', () => vscode.postMessage({ type: 'exportMd' }));
+  document.getElementById('export')?.addEventListener('click', () => vscode.postMessage({ type: 'export' }));
   document.getElementById('rescan')?.addEventListener('click', () => vscode.postMessage({ type: 'rescan' }));
 </script>
 </body>
