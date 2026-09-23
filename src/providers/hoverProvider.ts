@@ -20,6 +20,13 @@ export class SecuGuardHoverProvider implements vscode.HoverProvider {
     if (vuln.owasp) md.appendMarkdown(` &nbsp;|&nbsp; **OWASP:** ${vuln.owasp}`);
     md.appendMarkdown(`\n\n${vuln.description}\n\n`);
 
+    const lastChange = vuln.statusHistory && vuln.statusHistory.length > 0 ? vuln.statusHistory[vuln.statusHistory.length - 1] : undefined;
+    if (lastChange) {
+      const date = new Date(lastChange.changedAt).toLocaleString();
+      const gitLabel = lastChange.source === "git" ? " _(git identity, not verified GitHub username)_" : "";
+      md.appendMarkdown(`_Marked ${lastChange.status.replace("_", " ")} by @${lastChange.changedBy} on ${date}${gitLabel}_\n\n`);
+    }
+
     if (vuln.aiExplanation) {
       md.appendMarkdown(`---\n**AI Triage:** ${vuln.aiExplanation}\n\n`);
       if (typeof vuln.aiConfidence === "number") {

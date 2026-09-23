@@ -53,6 +53,18 @@
         "title": "SecuGuard: Mark False Positive"
       },
       {
+        "command": "secuguard.markFixed",
+        "title": "SecuGuard: Mark Fixed"
+      },
+      {
+        "command": "secuguard.setGithubUsername",
+        "title": "SecuGuard: Set GitHub Username"
+      },
+      {
+        "command": "secuguard.reloadFromDisk",
+        "title": "SecuGuard: Reload Findings from Disk"
+      },
+      {
         "command": "secuguard.generateFix",
         "title": "SecuGuard: Generate Fix"
       },
@@ -146,6 +158,10 @@
         {
           "command": "secuguard.markFalsePositive",
           "when": "view == secuguard.explorer && viewItem == finding"
+        },
+        {
+          "command": "secuguard.markFixed",
+          "when": "view == secuguard.explorer && viewItem == finding"
         }
       ],
       "editor/context": [
@@ -166,6 +182,15 @@
         },
         {
           "command": "secuguard.exportReport"
+        },
+        {
+          "command": "secuguard.markFixed"
+        },
+        {
+          "command": "secuguard.setGithubUsername"
+        },
+        {
+          "command": "secuguard.reloadFromDisk"
         }
       ]
     },
@@ -220,6 +245,16 @@
           "type": "string",
           "default": "claude-sonnet-4-6",
           "description": "Model used for AI triage / fix suggestions."
+        },
+        "secuguard.attribution.githubUsername": {
+          "type": "string",
+          "default": "",
+          "description": "GitHub username used to attribute SecuGuard status changes. Overrides automatic detection when set."
+        },
+        "secuguard.attribution.autoDetect": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically detect the attributing identity from the `gh` CLI, then `git config user.name` as a fallback."
         },
         "secuguard.baselineOnFirstRun": {
           "type": "boolean",

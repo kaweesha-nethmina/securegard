@@ -1,0 +1,3 @@
+# SecuGuard team-shared workflow: the audit log is append-only NDJSON.
+# Concurrent appends from different people should merge cleanly, line by line.
+.secuguard/audit-log.ndjson merge=union

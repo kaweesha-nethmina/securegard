@@ -72,8 +72,12 @@ export class SecurityExplorerProvider implements vscode.TreeDataProvider<TreeNod
     const v = element.vuln;
     const item = new vscode.TreeItem(`${v.title}`, vscode.TreeItemCollapsibleState.None);
     item.description = `L${v.startLine} · ${v.cwe.join(", ")}${v.status === "todo" ? " · TODO" : ""}`;
+    const lastChange = v.statusHistory && v.statusHistory.length > 0 ? v.statusHistory[v.statusHistory.length - 1] : undefined;
+    const byLine = lastChange
+      ? ` · last change by @${lastChange.changedBy} on ${new Date(lastChange.changedAt).toLocaleDateString()}`
+      : "";
     item.tooltip = new vscode.MarkdownString(
-      `**${v.title}**\n\n${v.description}\n\n_Status: ${v.status} · Source: ${v.sourceScanner}_`
+      `**${v.title}**\n\n${v.description}\n\n_Status: ${v.status} · Source: ${v.sourceScanner}${byLine}_`
     );
     item.iconPath = new vscode.ThemeIcon(SEVERITY_ICONS[v.severity], new vscode.ThemeColor(sevColorId(v.severity)));
     item.contextValue = "finding";

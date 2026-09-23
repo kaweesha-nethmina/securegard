@@ -123,6 +123,7 @@ function renderHtml(vulns: Vulnerability[]): string {
         <button class="icon-btn" data-action="open" data-id="${v.id}" title="Open in editor">↗</button>
         <button class="icon-btn" data-action="explain" data-id="${v.id}" title="Explain">💡</button>
         <button class="icon-btn" data-action="fix" data-id="${v.id}" title="Generate fix">🛠</button>
+        <button class="icon-btn" data-action="showHistory" data-id="${v.id}" title="Status history">🕘</button>
       </td>
     </tr>`
     )

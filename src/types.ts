@@ -10,6 +10,17 @@ export type VulnStatus =
   | "fixed"
   | "todo";
 
+export type IdentitySource = "setting" | "gh" | "git" | "prompt";
+
+export interface StatusHistoryEntry {
+  status: VulnStatus;
+  changedBy: string;
+  changedByEmail?: string;
+  changedAt: string; // ISO timestamp
+  note?: string;
+  source?: IdentitySource; // where the username came from (for UI labeling, e.g. unverified git identity)
+}
+
 export interface Vulnerability {
   id: string; // stable hash of rule+file+line+snippet
   ruleId: string;
@@ -39,6 +50,7 @@ export interface Vulnerability {
   linkedTodoId?: string;
   falsePositiveReason?: string;
   baseline?: boolean; // true if found on the very first scan
+  statusHistory: StatusHistoryEntry[];
 }
 
 export interface RawFinding {

@@ -3,9 +3,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { Database } from "../storage/database";
 import { Orchestrator } from "../engine/orchestrator";
-import { Vulnerability } from "../types";
+import { StatusHistoryEntry, Vulnerability, VulnStatus } from "../types";
 import { triageVulnerability } from "../ai/triageService";
 import { toSarif, toMarkdownReport } from "../utils/sarif";
+import { resolveIdentity, clearIdentityCache } from "../utils/identity";
 import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
 import { SecurityExplorerProvider, SummaryProvider } from "../providers/treeViewProvider";
 import { SecuGuardCodeLensProvider } from "../providers/codeLensProvider";
@@ -46,7 +47,8 @@ async function runScan(w: Wiring, targets: string[], label: string) {
       w.outputChannel.appendLine(
         `[${new Date().toISOString()}] Scan complete — ${stats.filesScanned} files, ${stats.durationMs}ms, scanners: ${stats.scannersRun.join(", ")}, findings: ${vulnerabilities.length}`
       );
-      w.db.addAuditEntry("scan", `${label}: ${stats.filesScanned} files scanned via [${stats.scannersRun.join(", ")}], ${vulnerabilities.length} findings`);
+      const identity = await resolveIdentity(w.context, w.workspaceRoot);
+      w.db.addAuditEntry("scan", `${label}: ${stats.filesScanned} files scanned via [${stats.scannersRun.join(", ")}], ${vulnerabilities.length} findings`, identity.username);
       refreshAll(w, stats);
 
       const newCritical = vulnerabilities.filter((v) => v.severity === "critical" && v.status === "open").length;
@@ -67,6 +69,39 @@ function findVuln(w: Wiring, id: string | undefined): Vulnerability | undefined 
   const v = w.db.get(id);
   if (!v) vscode.window.showErrorMessage("SecuGuard: finding not found (it may have been resolved by a rescan).");
   return v;
+}
+
+async function updateStatus(w: Wiring, v: Vulnerability, status: VulnStatus, note?: string): Promise<void> {
+  const identity = await resolveIdentity(w.context, w.workspaceRoot);
+  const entry: StatusHistoryEntry = {
+    status,
+    changedBy: identity.username,
+    changedAt: new Date().toISOString(),
+    ...(identity.email ? { changedByEmail: identity.email } : {}),
+    ...(identity.source ? { source: identity.source } : {}),
+    ...(note !== undefined ? { note } : {}),
+  };
+  w.db.update(v.id, { status, statusHistory: [...(v.statusHistory ?? []), entry] });
+  w.db.addAuditEntry("status_change", `@${identity.username} set ${v.id} (${v.title}) → ${status}${note ? ` — ${note}` : ""}`, identity.username);
+}
+
+function reloadFromDisk(w: Wiring): void {
+  w.db.reload();
+  refreshAll(w);
+  w.outputChannel.appendLine(`[${new Date().toISOString()}] SecuGuard reloaded findings from disk.`);
+}
+
+function showHistoryQuickPick(v: Vulnerability): void {
+  const entries = [...(v.statusHistory ?? [])].reverse();
+  const items: vscode.QuickPickItem[] = entries.map((e) => ({
+    label: `$(circle-outline) ${e.status.replace("_", " ")}`,
+    description: `@${e.changedBy}${e.changedByEmail ? ` <${e.changedByEmail}>` : ""}${e.source === "git" ? " (git identity)" : ""} · ${new Date(e.changedAt).toLocaleString()}`,
+    detail: e.note ?? v.title,
+  }));
+  if (items.length === 0) {
+    items.push({ label: "No status changes recorded", description: undefined, detail: `Status: ${v.status}` });
+  }
+  vscode.window.showQuickPick(items, { placeHolder: `History — ${v.title}`, matchOnDetail: true });
 }
 
 async function getApiKey(w: Wiring): Promise<string | undefined> {
@@ -125,8 +160,7 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
     vscode.commands.registerCommand("secuguard.saveToBacklog", async (id?: string) => {
       const v = findVuln(w, id);
       if (!v) return;
-      w.db.update(v.id, { status: "triaged" });
-      w.db.addAuditEntry("save", `Saved ${v.id} (${v.title}) to backlog`);
+      await updateStatus(w, v, "triaged", "Saved to backlog");
       refreshAll(w);
       vscode.window.showInformationMessage(`Saved "${v.title}" to the vulnerability backlog.`);
     })
@@ -151,8 +185,10 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           editBuilder.insert(new vscode.Position(line, 0), todoLine);
         });
         const todoId = `TODO-${v.id.slice(0, 8)}`;
-        w.db.update(v.id, { status: "todo", linkedTodoId: todoId });
-        w.db.addAuditEntry("add_todo", `Inserted TODO ${todoId} for ${v.id} at ${v.file}:${v.startLine}`);
+        await updateStatus(w, v, "todo", `TODO ${todoId} inserted`);
+        w.db.update(v.id, { linkedTodoId: todoId });
+        const identity = await resolveIdentity(w.context, w.workspaceRoot);
+        w.db.addAuditEntry("add_todo", `Inserted TODO ${todoId} for ${v.id} at ${v.file}:${v.startLine}`, identity.username);
         refreshAll(w);
       } catch (e: any) {
         vscode.window.showErrorMessage(`SecuGuard: couldn't insert TODO — ${e.message}`);
@@ -169,11 +205,45 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
         placeHolder: "e.g. input is validated upstream by middleware X",
       });
       if (reason === undefined) return; // cancelled
-      w.db.update(v.id, { status: "false_positive", falsePositiveReason: reason || "(no reason given)" });
+      await updateStatus(w, v, "false_positive", reason || "(no reason given)");
+      w.db.update(v.id, { falsePositiveReason: reason || "(no reason given)" });
       w.db.addIgnoreRule({ ruleId: v.ruleId, reason: reason || "(no reason given)", createdAt: new Date().toISOString(), file: v.file });
-      w.db.addAuditEntry("suppress", `Suppressed ${v.id} (${v.ruleId}) — reason: ${reason}`);
+      const identity = await resolveIdentity(w.context, w.workspaceRoot);
+      w.db.addAuditEntry("suppress", `Suppressed ${v.id} (${v.ruleId}) — reason: ${reason}`, identity.username);
       refreshAll(w);
       vscode.window.showInformationMessage(`Marked "${v.title}" as false positive. Reason saved to .secuguard/ignore.yml.`);
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.markFixed", async (id?: string) => {
+      const v = findVuln(w, id);
+      if (!v) return;
+      await updateStatus(w, v, "fixed");
+      refreshAll(w);
+      vscode.window.showInformationMessage(`Marked "${v.title}" as fixed.`);
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.reloadFromDisk", () => {
+      reloadFromDisk(w);
+      vscode.window.showInformationMessage("SecuGuard: findings reloaded from disk.");
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.setGithubUsername", async () => {
+      const answer = await vscode.window.showInputBox({
+        prompt: "What's your GitHub username? Used to attribute SecuGuard status changes.",
+        placeHolder: "GitHub username",
+        ignoreFocusOut: true,
+      });
+      if (answer?.trim()) {
+        await w.context.globalState.update("secuguard.githubUsername", answer.trim());
+        clearIdentityCache();
+        vscode.window.showInformationMessage(`SecuGuard will attribute changes to @${answer.trim()}.`);
+      }
     })
   );
 
@@ -201,7 +271,8 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
             suggestedFix: result.suggestedFix || v.suggestedFix,
             status: result.isLikelyFalsePositive && v.status === "open" ? v.status : v.status,
           });
-          w.db.addAuditEntry("ai_triage", `AI triage run for ${v.id} — confidence ${result.confidence}`);
+          const aiIdentity = await resolveIdentity(w.context, w.workspaceRoot);
+          w.db.addAuditEntry("ai_triage", `AI triage run for ${v.id} — confidence ${result.confidence}`, aiIdentity.username);
           refreshAll(w);
           showExplainPanel(w.db.get(v.id)!);
           if (result.isLikelyFalsePositive) {
@@ -264,7 +335,8 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
       const uri = await vscode.window.showSaveDialog({ defaultUri: vscode.Uri.file(path.join(w.workspaceRoot, defaultName)) });
       if (!uri) return;
       fs.writeFileSync(uri.fsPath, content, "utf8");
-      w.db.addAuditEntry("export", `Exported ${format} report to ${uri.fsPath}`);
+      const exportIdentity = await resolveIdentity(w.context, w.workspaceRoot);
+      w.db.addAuditEntry("export", `Exported ${format} report to ${uri.fsPath}`, exportIdentity.username);
       vscode.window.showInformationMessage(`SecuGuard report saved to ${uri.fsPath}`);
     })
   );
@@ -287,10 +359,19 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           case "fix":
             vscode.commands.executeCommand("secuguard.generateFix", msg.id);
             break;
-          case "setStatus":
-            w.db.update(msg.id, { status: msg.status });
+          case "setStatus": {
+            const v = w.db.get(msg.id);
+            if (v && typeof msg.status === "string") {
+              await updateStatus(w, v, msg.status as VulnStatus);
+            }
             refreshAll(w);
             break;
+          }
+          case "showHistory": {
+            const v = w.db.get(msg.id);
+            if (v) showHistoryQuickPick(v);
+            break;
+          }
           case "exportSarif":
             vscode.commands.executeCommand("secuguard.exportReport");
             break;
@@ -318,6 +399,22 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
       vscode.window.showInformationMessage("SecuGuard: local vulnerability database cleared.");
     })
   );
+
+  // Auto-refresh when .secuguard/findings/ changes out-of-band (e.g. after a
+  // `git pull` brings in teammates' status updates). Debounced to coalesce the
+  // burst of file events that a single check/commit causes.
+  let reloadTimer: NodeJS.Timeout | undefined;
+  const scheduleReload = () => {
+    if (reloadTimer) clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => reloadFromDisk(w), 200);
+  };
+  const findingsWatcher = vscode.workspace.createFileSystemWatcher(
+    new vscode.RelativePattern(w.workspaceRoot, ".secuguard/findings/*.json")
+  );
+  findingsWatcher.onDidCreate(scheduleReload);
+  findingsWatcher.onDidChange(scheduleReload);
+  findingsWatcher.onDidDelete(scheduleReload);
+  disposables.push(findingsWatcher);
 
   return disposables;
 }

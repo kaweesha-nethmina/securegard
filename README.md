@@ -11,7 +11,7 @@ An embedded security QA engineer for VS Code: scans your workspace across langua
 - **Full VS Code UI**: Problems panel diagnostics, a "Security Explorer" tree view (Severity → File → Finding), inline CodeLens actions, hover explanations, Quick Fix actions (`Ctrl+.`), and an interactive HTML dashboard (charts, search, filters, inline status changes) — all built with a modern, VS Code–theme-aware design and zero external CDN dependencies.
 - **Lifecycle management**: Save to backlog, insert a linked `// TODO(security): ...` comment, or suppress with a required reason (written to `.secuguard/ignore.yml` so the team can see *why*).
 - **SARIF / Markdown / JSON export** for CI, GitHub/GitLab security tabs, or sharing with a team.
-- **Local-first**: everything is stored in `.secuguard/db.json` inside your workspace. No code leaves your machine unless you explicitly enable AI triage — and even then only the flagged snippet is sent, not the file.
+- **Local-first, team-shared**: everything is stored in `.secuguard/` — one small JSON file per finding (`findings/<id>.json`), plus `meta.json` and an append-only `audit-log.ndjson`. Commit the folder so teammates see the same findings and status history. No code leaves your machine unless you explicitly enable AI triage — and even then only the flagged snippet is sent, not the file.
 
 ## Getting started
 
@@ -35,6 +35,25 @@ pip install semgrep   # or: brew install semgrep
 ```
 SecuGuard detects it automatically on the next scan — no configuration needed.
 
+## Team workflow with git
+
+`.secuguard/` is meant to be committed to your repository so every teammate shares the same vulnerability board (findings, status changes, and who made them).
+
+```bash
+git add .secuguard .gitattributes
+git commit -m "chore(secuguard): track vulnerability findings"
+```
+
+**The loop:**
+
+1. Scan / change status as usual (Status dropdown in the dashboard, **Explain**, **Generate Fix**, **Save to Backlog**, **Add as TODO**, **Mark False Positive**, **Mark Fixed**, or the tree-view context menu).
+2. Every status change appends an entry to that finding's `statusHistory` (status, `@username`, timestamp, optional note) and is attributed to your GitHub username — resolved from `secuguard.attribution.githubUsername`, then the `gh` CLI, then `git config user.name` (shown as unverified), with a one-time prompt as a last resort. Change it anytime via **SecuGuard: Set GitHub Username**.
+3. Commit the changed files: `git add .secuguard && git commit -m "fix(secuguard): triage SG-xxx as fixed"`.
+
+**Pulling teammates' updates:** after `git pull`, SecuGuard auto-watches `.secuguard/findings/` and refreshes; you can also run **SecuGuard: Reload Findings from Disk** to force it.
+
+**Conflicts are scoped per finding.** Because each finding lives in its own file, two people editing *different* findings never conflict. The only conflict is when two people change the *same* finding's status in the same window — resolve it like any Git conflict: pick the file's version and keep both history entries if you like, then commit. The audit log uses `merge=union` (see `.gitattributes`), so concurrent appends merge line-by-line without conflict.
+
 ## Key commands
 
 | Command | What it does |
@@ -47,6 +66,9 @@ SecuGuard detects it automatically on the next scan — no configuration needed.
 | `SecuGuard: Save to Vulnerability List` | Marks as triaged/tracked |
 | `SecuGuard: Add as TODO` | Inserts a linked `// TODO(security): [SG-xxxx] ...` comment |
 | `SecuGuard: Mark False Positive` | Requires a reason; persisted to `.secuguard/ignore.yml` |
+| `SecuGuard: Mark Fixed` | Attribute and record that a finding is fixed |
+| `SecuGuard: Reload Findings from Disk` | Re-read `.secuguard/findings/` after a `git pull` (also auto-watched) |
+| `SecuGuard: Set GitHub Username` | Change the username used to attribute status changes |
 | `SecuGuard: Export Report` | SARIF / Markdown / JSON |
 
 ## Architecture
@@ -61,7 +83,7 @@ Orchestrator
         ↓
    Normalizer  (dedupes by file+line+rule, stable hash IDs, merges scanner names)
         ↓
-   Database    (.secuguard/db.json — status, notes, audit log, ignore rules)
+   Database    (.secuguard/findings/<id>.json + meta.json + audit-log.ndjson)
         ↓
  Diagnostics / TreeView / CodeLens / Hover / CodeActions / Dashboard
 ```
@@ -76,4 +98,4 @@ Add entries to `src/rules/rules.ts` — each rule is a regex + CWE/OWASP mapping
 - SCA / dependency scanning (OSV-Scanner, npm audit, pip-audit) as additional adapters
 - IaC scanning (Checkov/tfsec) and container scanning (Trivy/Grype) adapters
 - CI headless mode (`secuguard scan --fail-on critical`) by extracting `src/engine` + `src/scanners` into a standalone CLI package
-- Swap `.secuguard/db.json` for SQLite if a workspace grows very large
+- Swap the per-finding JSON files under `.secuguard/findings/` for SQLite if a workspace grows very large

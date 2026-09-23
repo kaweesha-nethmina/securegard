@@ -73,6 +73,7 @@ export function normalize(
         aiConfidence: prior?.aiConfidence,
         falsePositiveReason: prior?.falsePositiveReason,
         baseline: prior?.baseline ?? baselineMode,
+        statusHistory: prior?.statusHistory ?? [],
       });
     }
   }
