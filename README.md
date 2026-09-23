@@ -20,7 +20,7 @@ An embedded security + quality engineer for VS Code: scans your workspace for vu
 
 | Task | Budget (tokens) | Gemini hint | Groq hint |
 |---|---|---|---|
-| `explain` / `classify` | 350 | `gemini-2.5-flash-lite` | `llama-3.3-8b-instant` |
+| `explain` / `classify` | 350 | `gemini-2.5-flash-lite` | `llama-3.3-70b-versatile` |
 | `testGeneration` | 900 | `gemini-2.5-flash` | `llama-3.3-70b-versatile` |
 | `reportSection` | 1200 | `gemini-2.5-flash` | `llama-3.3-70b-versatile` |
 

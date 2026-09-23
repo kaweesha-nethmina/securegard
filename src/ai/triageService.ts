@@ -39,7 +39,8 @@ export const TASK_TOKEN_BUDGETS: Record<AiTask, number> = {
 
 /**
  * Per-provider, per-task model hints. An explicit `secuguard.ai.model` setting
- * always wins over these (see resolveModelForTask).
+ * always wins over these (see resolveModelForTask) as long as it belongs to
+ * the active provider.
  */
 export const TASK_MODEL_HINTS: Record<AiProvider, Partial<Record<AiTask, string>>> = {
   gemini: {
@@ -49,8 +50,10 @@ export const TASK_MODEL_HINTS: Record<AiProvider, Partial<Record<AiTask, string>
     reportSection: "gemini-2.5-flash",
   },
   groq: {
-    explain: "llama-3.3-8b-instant",
-    classify: "llama-3.3-8b-instant",
+    // Keep the default on a currently supported Groq model. The old 8B
+    // instant models may be rejected with 404 model_not_found.
+    explain: "llama-3.3-70b-versatile",
+    classify: "llama-3.3-70b-versatile",
     testGeneration: "llama-3.3-70b-versatile",
     reportSection: "llama-3.3-70b-versatile",
   },
@@ -65,12 +68,26 @@ export const TASK_MODEL_HINTS: Record<AiProvider, Partial<Record<AiTask, string>
 const DEFAULT_GEMINI_MODEL = PROVIDER_DEFAULTS.gemini.model;
 
 /**
+ * Heuristic check that a model name can plausibly be served by the provider.
+ * Prevents e.g. a leftover "gemini-2.5-pro" setting from being sent to Groq.
+ */
+function modelBelongsToProvider(model: string, provider: AiProvider): boolean {
+  const m = model.trim().toLowerCase();
+  if (provider === "gemini") return m.startsWith("gemini") || m.startsWith("models/gemini") || m.startsWith("gemma");
+  if (provider === "anthropic") return m.startsWith("claude");
+  // groq hosts llama, mixtral, gemma, qwen, openai/gpt-oss, etc. — just exclude the other vendors' families.
+  return !m.startsWith("gemini") && !m.startsWith("models/gemini") && !m.startsWith("claude");
+}
+
+/**
  * Model for a given task. An explicitly-configured model (anything different
- * from the package-default value) always wins; otherwise fall back to the
- * task/display hint, then the provider default.
+ * from the package-default value) wins only if it fits the active provider;
+ * otherwise fall back to the task/display hint, then the provider default.
  */
 export function resolveModelForTask(task: AiTask, provider: AiProvider, explicitModel?: string): string {
-  if (explicitModel && explicitModel !== DEFAULT_GEMINI_MODEL) return explicitModel;
+  if (explicitModel && explicitModel !== DEFAULT_GEMINI_MODEL && modelBelongsToProvider(explicitModel, provider)) {
+    return explicitModel;
+  }
   return TASK_MODEL_HINTS[provider][task] ?? PROVIDER_DEFAULTS[provider].model;
 }
 
@@ -119,6 +136,38 @@ function postJson(hostname: string, requestPath: string, headers: Record<string,
   });
 }
 
+/** Fetches a JSON response without putting the API key in the URL. */
+function getJson(hostname: string, requestPath: string, headers: Record<string, string>): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const req = https.request({ hostname, path: requestPath, method: "GET", headers }, (res) => {
+      let data = "";
+      res.on("data", (chunk) => (data += chunk));
+      res.on("end", () => {
+        if ((res.statusCode ?? 500) >= 400) {
+          reject(new Error(`AI API error ${res.statusCode}: ${data.slice(0, 300)}`));
+          return;
+        }
+        resolve(data);
+      });
+    });
+    req.on("error", reject);
+    req.end();
+  });
+}
+
+/** Finds a chat-capable model available to the specific Groq key. */
+async function findAvailableGroqModel(apiKey: string, requestedModel: string): Promise<string> {
+  const raw = await getJson("api.groq.com", "/openai/v1/models", { authorization: `Bearer ${apiKey}` });
+  const models = JSON.parse(raw).data;
+  if (!Array.isArray(models)) throw new Error("Groq returned no model list.");
+
+  const ids = models
+    .map((model: any) => typeof model?.id === "string" ? model.id : "")
+    .filter((id: string) => id && !/(whisper|distil|guard|safety|embed|speech|tts)/i.test(id));
+  const preferred = ["openai/gpt-oss-120b", "llama-4-scout-17b-16e-instruct", "llama-3.3-70b-versatile"];
+  return preferred.find((id) => id !== requestedModel && ids.includes(id)) ?? ids.find((id) => id !== requestedModel) ?? requestedModel;
+}
+
 function buildUserContent(vuln: Vulnerability): string {
   return `Rule: ${vuln.ruleId} — ${vuln.title}
 CWE: ${vuln.cwe.join(", ")}
@@ -139,6 +188,29 @@ export function isQuotaError(e: any): boolean {
     m.includes("resource_exhausted") ||
     m.includes("too many requests")
   );
+}
+
+/** True when an error looks like a rejected/invalid API key. */
+function isAuthError(e: any): boolean {
+  const m = String(e?.message || e || "").toLowerCase();
+  return (
+    m.includes("api_key_invalid") ||
+    m.includes("api key not valid") ||
+    m.includes("invalid api key") ||
+    m.includes("invalid_api_key") ||
+    m.includes("ai api error 401") ||
+    m.includes("ai api error 403")
+  );
+}
+
+/** Adds a hint to auth errors so a provider/key mismatch is obvious. */
+function withAuthHint(err: any, provider: AiProvider): Error {
+  if (isAuthError(err)) {
+    return new Error(
+      `${String(err?.message ?? err)}\nHint: the key was sent to ${provider}. Make sure the key in Settings was issued by ${provider} (${PROVIDER_DEFAULTS[provider].signupUrl}).`
+    );
+  }
+  return err instanceof Error ? err : new Error(String(err));
 }
 
 interface ProviderCall {
@@ -168,31 +240,43 @@ async function callProvider(provider: AiProvider, call: ProviderCall): Promise<s
       return (parsed.content || []).map((b: any) => b.text || "").join("\n");
     }
     case "groq": {
-      const raw = await postJson(
-        "api.groq.com",
-        "/openai/v1/chat/completions",
-        { authorization: `Bearer ${call.apiKey}` },
-        {
-          model: call.model,
-          max_tokens: call.maxTokens,
-          temperature: call.temperature,
-          messages: [
-            { role: "system", content: call.systemPrompt },
-            { role: "user", content: call.userContent },
-          ],
-          response_format: { type: "json_object" },
-        }
-      );
+      const request = (model: string) =>
+        postJson(
+          "api.groq.com",
+          "/openai/v1/chat/completions",
+          { authorization: `Bearer ${call.apiKey}` },
+          {
+            model,
+            max_tokens: call.maxTokens,
+            temperature: call.temperature,
+            messages: [
+              { role: "system", content: call.systemPrompt },
+              { role: "user", content: call.userContent },
+            ],
+            response_format: { type: "json_object" },
+          }
+        );
+
+      let raw: string;
+      try {
+        raw = await request(call.model);
+      } catch (error: any) {
+        const message = String(error?.message ?? error).toLowerCase();
+        if (!message.includes("model_not_found") && !message.includes("404")) throw error;
+        const availableModel = await findAvailableGroqModel(call.apiKey, call.model);
+        raw = await request(availableModel);
+      }
       const parsed = JSON.parse(raw);
       return parsed.choices?.[0]?.message?.content ?? "";
     }
     case "gemini":
     default: {
-      const path = `/v1beta/models/${encodeURIComponent(call.model)}:generateContent?key=${encodeURIComponent(call.apiKey)}`;
+      // API key goes in a header (not the URL) so it can't leak into logs or error messages.
+      const path = `/v1beta/models/${encodeURIComponent(call.model)}:generateContent`;
       const raw = await postJson(
         "generativelanguage.googleapis.com",
         path,
-        {},
+        { "x-goog-api-key": call.apiKey },
         {
           systemInstruction: { parts: [{ text: call.systemPrompt }] },
           contents: [{ parts: [{ text: call.userContent }] }],
@@ -273,17 +357,22 @@ export async function callWithFailover(opts: AiCallOptions, userContent: string)
     return { text, via: opts.provider, usedFallback: false };
   } catch (err: any) {
     if (isQuotaError(err) && opts.fallbackProvider && opts.fallbackApiKey && opts.fallbackModel) {
-      opts.onUsedFallback?.(opts.provider, opts.fallbackProvider);
-      const text = await withConcurrency(() =>
-        callProvider(opts.fallbackProvider!, {
-          ...base,
-          apiKey: opts.fallbackApiKey!,
-          model: opts.fallbackModel!,
-        })
-      );
-      return { text, via: opts.fallbackProvider, usedFallback: true };
+      const fbProvider = opts.fallbackProvider;
+      opts.onUsedFallback?.(opts.provider, fbProvider);
+      try {
+        const text = await withConcurrency(() =>
+          callProvider(fbProvider, {
+            ...base,
+            apiKey: opts.fallbackApiKey!,
+            model: opts.fallbackModel!,
+          })
+        );
+        return { text, via: fbProvider, usedFallback: true };
+      } catch (fbErr: any) {
+        throw withAuthHint(fbErr, fbProvider);
+      }
     }
-    throw err;
+    throw withAuthHint(err, opts.provider);
   }
 }
 

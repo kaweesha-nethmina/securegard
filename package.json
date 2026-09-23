@@ -308,6 +308,16 @@
           "default": "",
           "description": "Name of the environment variable holding your AI API key. When empty, defaults per provider: GEMINI_API_KEY (gemini), GROQ_API_KEY (groq), ANTHROPIC_API_KEY (anthropic). The key itself is never stored in settings."
         },
+        "secuguard.ai.apiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Your AI API key (pasted directly). Takes precedence over the environment variable. Stored in VS Code settings (not in the workspace)."
+        },
+        "secuguard.ai.fallbackApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "Fallback provider API key (for quota failover). Stored in VS Code settings."
+        },
         "secuguard.ai.model": {
           "type": "string",
           "default": "gemini-2.5-flash",

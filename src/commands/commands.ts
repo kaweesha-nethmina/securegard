@@ -35,44 +35,72 @@ let extensionUri: vscode.Uri | undefined;
 
 let failoverNotified = false;
 
-function aiProvider(): AiProvider {
+/**
+ * Detects which provider a pasted API key belongs to from its prefix.
+ * A key can only work with the provider that issued it, so the key decides the provider.
+ *   Groq       → gsk_...
+ *   Gemini     → AIza...
+ *   Anthropic  → sk-ant-...
+ */
+function detectProviderFromKey(key: string | undefined): AiProvider | undefined {
+  const k = (key ?? "").trim();
+  if (!k) return undefined;
+  if (k.startsWith("gsk_")) return "groq";
+  if (k.startsWith("AIza")) return "gemini";
+  if (k.startsWith("sk-ant-")) return "anthropic";
+  return undefined;
+}
+
+/** The provider chosen in the `secuguard.ai.provider` setting (ignores the pasted key). */
+function configuredProvider(): AiProvider {
   const p = config().get<string>("ai.provider", "gemini");
   return p === "anthropic" || p === "groq" || p === "gemini" ? p : "gemini";
 }
 
+/**
+ * The active provider. A key pasted into `secuguard.ai.apiKey` wins over the
+ * provider dropdown, so a Groq key can never be sent to Google (and vice versa).
+ */
+function aiProvider(): AiProvider {
+  const detected = detectProviderFromKey(config().get<string>("ai.apiKey", ""));
+  return detected ?? configuredProvider();
+}
+
 function aiModelForTask(task: AiTask): string {
-  const configured = config().get<string>("ai.model", "");
+  // If the pasted key overrode the provider setting, `ai.model` was meant for the
+  // other provider (e.g. a Gemini model name), so ignore it and use provider defaults.
+  const providerMismatch = aiProvider() !== configuredProvider();
+  const configured = providerMismatch ? "" : config().get<string>("ai.model", "");
   return resolveModelForTask(task, aiProvider(), configured);
 }
 
-function aiApiKeyEnvVar(): string {
-  const configured = config().get<string>("ai.apiKeyEnvVar", "");
-  return configured || PROVIDER_DEFAULTS[aiProvider()].envVar;
-}
-
 /**
- * Resolves the fallback provider for 429/quota failover. Defaults: gemini→groq,
- * groq→gemini, none for anthropic. Reuses each provider's own key env var.
+ * Resolves the fallback provider for 429/quota failover. It is only enabled when a
+ * fallback key is pasted in `secuguard.ai.fallbackApiKey`. The key's prefix decides the
+ * provider; otherwise `ai.fallbackProvider` (or gemini↔groq) is used. Never falls back
+ * to the same provider as the primary, and never uses .env keys.
  */
 function fallbackProviderConfig(): { provider: AiProvider | undefined; apiKey: string | undefined; model: string | undefined } {
+  const none = { provider: undefined, apiKey: undefined, model: undefined };
   const primary = aiProvider();
-  if (primary === "anthropic") return { provider: undefined, apiKey: undefined, model: undefined };
-  const configured = config().get<string>("ai.fallbackProvider", "");
-  let fb: AiProvider | undefined;
-  if (configured === "groq" || configured === "gemini") {
-    fb = configured;
-  } else {
-    fb = primary === "gemini" ? "groq" : "gemini";
+  if (primary === "anthropic") return none;
+
+  const fallbackKey = config().get<string>("ai.fallbackApiKey", "").trim();
+  if (!fallbackKey) return none;
+
+  let fb: AiProvider | undefined = detectProviderFromKey(fallbackKey);
+  if (!fb) {
+    const configured = config().get<string>("ai.fallbackProvider", "");
+    fb = configured === "groq" || configured === "gemini" ? configured : primary === "gemini" ? "groq" : "gemini";
   }
-  if (fb === primary) fb = undefined;
-  if (!fb) return { provider: undefined, apiKey: undefined, model: undefined };
-  // Check settings for fallback API key first, then env var
-  const fallbackKeySetting = config().get<string>("ai.fallbackApiKey", "");
-  const fallbackKey = fallbackKeySetting || process.env[PROVIDER_DEFAULTS[fb].envVar];
+  // Same provider as primary would just repeat the quota error.
+  if (fb === primary) return none;
+
   return {
     provider: fb,
     apiKey: fallbackKey,
-    model: resolveModelForTask("explain", fb, config().get<string>("ai.model", "")),
+    // Empty override → the fallback provider's own default model (ai.model belongs to the primary).
+    model: resolveModelForTask("explain", fb, ""),
   };
 }
 
@@ -254,16 +282,23 @@ function showHistoryQuickPick(v: Vulnerability): void {
   vscode.window.showQuickPick(items, { placeHolder: `History — ${v.title}`, matchOnDetail: true });
 }
 
+/**
+ * Returns the API key pasted by the user in `secuguard.ai.apiKey`.
+ * Environment variables / .env are intentionally NOT used.
+ */
 async function getApiKey(w: Wiring): Promise<string | undefined> {
   const provider = aiProvider();
   const info = PROVIDER_DEFAULTS[provider];
-  const envVar = aiApiKeyEnvVar();
-  // First check VS Code setting for apiKey directly
-  const settingsKey = config().get<string>("ai.apiKey", "");
-  const key = settingsKey || process.env[envVar];
+  const key = config().get<string>("ai.apiKey", "").trim();
+
+  const configured = configuredProvider();
+  w.outputChannel.appendLine(
+    `[SecuGuard] AI provider: ${provider}${provider !== configured ? ` (auto-detected from key; settings say "${configured}")` : ""}, key source: ${key ? "settings" : "none"}, key length: ${key.length}`
+  );
+
   if (!key) {
     const choice = await vscode.window.showWarningMessage(
-      `SecuGuard ${provider} triage needs the ${envVar} environment variable set (or set \`secuguard.ai.apiKey\` in settings). Get a free key: ${info.signupUrl}`,
+      `SecuGuard AI needs an API key. Paste it into \`secuguard.ai.apiKey\` in Settings. Get a free ${provider} key: ${info.signupUrl}`,
       "Open Settings",
       "Get API key"
     );
