@@ -4,7 +4,7 @@ import * as path from "path";
 import { Database } from "../storage/database";
 import { Orchestrator } from "../engine/orchestrator";
 import { StatusHistoryEntry, Vulnerability, VulnStatus } from "../types";
-import { triageVulnerability } from "../ai/triageService";
+import { triageVulnerability, AiProvider, PROVIDER_DEFAULTS } from "../ai/triageService";
 import { toSarif, toMarkdownReport } from "../utils/sarif";
 import { resolveIdentity, clearIdentityCache } from "../utils/identity";
 import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
@@ -26,6 +26,25 @@ export interface Wiring {
 
 function config() {
   return vscode.workspace.getConfiguration("secuguard");
+}
+
+function aiProvider(): AiProvider {
+  const p = config().get<string>("ai.provider", "gemini");
+  return p === "anthropic" || p === "groq" || p === "gemini" ? p : "gemini";
+}
+
+function aiModel(): string {
+  const provider = aiProvider();
+  const configured = config().get<string>("ai.model", "");
+  // Respect an explicit user-set model, otherwise fall back to the selected
+  // provider's default (handles the package default being Gemini's model).
+  if (configured && configured !== PROVIDER_DEFAULTS.gemini.model) return configured;
+  return PROVIDER_DEFAULTS[provider].model;
+}
+
+function aiApiKeyEnvVar(): string {
+  const configured = config().get<string>("ai.apiKeyEnvVar", "");
+  return configured || PROVIDER_DEFAULTS[aiProvider()].envVar;
 }
 
 function refreshAll(w: Wiring, stats?: { filesScanned: number; durationMs: number; scannersRun: string[] }) {
@@ -105,14 +124,21 @@ function showHistoryQuickPick(v: Vulnerability): void {
 }
 
 async function getApiKey(w: Wiring): Promise<string | undefined> {
-  const envVar = config().get<string>("ai.apiKeyEnvVar", "ANTHROPIC_API_KEY");
+  const provider = aiProvider();
+  const info = PROVIDER_DEFAULTS[provider];
+  const envVar = aiApiKeyEnvVar();
   const key = process.env[envVar];
   if (!key) {
     const choice = await vscode.window.showWarningMessage(
-      `SecuGuard AI triage needs the ${envVar} environment variable set (or enable it in Settings). Open Settings?`,
-      "Open Settings"
+      `SecuGuard ${provider} triage needs the ${envVar} environment variable set (or set \`secuguard.ai.apiKeyEnvVar\`). Get a free key: ${info.signupUrl}`,
+      "Open Settings",
+      "Get API key"
     );
-    if (choice === "Open Settings") vscode.commands.executeCommand("workbench.action.openSettings", "secuguard.ai");
+    if (choice === "Get API key") {
+      vscode.env.openExternal(vscode.Uri.parse(info.signupUrl));
+    } else if (choice === "Open Settings") {
+      vscode.commands.executeCommand("workbench.action.openSettings", "secuguard.ai");
+    }
     return undefined;
   }
   return key;
@@ -264,7 +290,7 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
       if (!apiKey) return;
       await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SecuGuard: asking AI triage…" }, async () => {
         try {
-          const result = await triageVulnerability(v, apiKey, config().get<string>("ai.model", "claude-sonnet-4-6"));
+          const result = await triageVulnerability(v, apiKey, aiModel(), aiProvider());
           w.db.update(v.id, {
             aiExplanation: result.explanation,
             aiConfidence: result.confidence,
@@ -298,7 +324,7 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
         if (apiKey) {
           await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SecuGuard: generating fix…" }, async () => {
             try {
-              const result = await triageVulnerability(v, apiKey, config().get<string>("ai.model", "claude-sonnet-4-6"));
+const result = await triageVulnerability(v, apiKey, aiModel(), aiProvider());
               w.db.update(v.id, { suggestedFix: result.suggestedFix, aiExplanation: result.explanation, aiConfidence: result.confidence });
               refreshAll(w);
               vscode.window.showInformationMessage(result.suggestedFix, { modal: true });

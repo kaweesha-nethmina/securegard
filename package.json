@@ -237,15 +237,25 @@
           "default": false,
           "description": "Enable AI-assisted triage (sends only the flagged snippet + minimal context, never full files, to the configured model)."
         },
+        "secuguard.ai.provider": {
+          "type": "string",
+          "enum": [
+            "anthropic",
+            "gemini",
+            "groq"
+          ],
+          "default": "gemini",
+          "description": "AI provider used for triage / fix suggestions. Gemini is the free option by default; groq also offers a free tier."
+        },
         "secuguard.ai.apiKeyEnvVar": {
           "type": "string",
-          "default": "ANTHROPIC_API_KEY",
-          "description": "Name of the environment variable holding your Anthropic API key. The key itself is never stored in settings."
+          "default": "",
+          "description": "Name of the environment variable holding your AI API key. When empty, defaults per provider: GEMINI_API_KEY (gemini), GROQ_API_KEY (groq), ANTHROPIC_API_KEY (anthropic). The key itself is never stored in settings."
         },
         "secuguard.ai.model": {
           "type": "string",
-          "default": "claude-sonnet-4-6",
-          "description": "Model used for AI triage / fix suggestions."
+          "default": "gemini-2.5-flash",
+          "description": "Model used for AI triage / fix suggestions. Defaults per provider when unset: gemini-2.5-flash (gemini), llama-3.3-70b-versatile (groq), claude-sonnet-4-6 (anthropic)."
         },
         "secuguard.attribution.githubUsername": {
           "type": "string",

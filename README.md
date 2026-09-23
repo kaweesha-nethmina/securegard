@@ -24,9 +24,18 @@ Then press **F5** in VS Code (with this folder open) to launch an Extension Deve
 
 ### Enable optional AI triage
 
-1. Set the `ANTHROPIC_API_KEY` environment variable (or change the env var name via `secuguard.ai.apiKeyEnvVar`).
-2. Turn on `secuguard.ai.enabled` in Settings.
-3. Click **Explain** or **Generate Fix** on any finding (CodeLens, Quick Fix, Tree View context menu, or the dashboard).
+AI triage is provider-swappable and is **free** by default via Google Gemini. Three providers are supported:
+
+| Provider | Default model | Default env var | Get a key |
+|---|---|---|---|
+| **Gemini** (default, free tier) | `gemini-2.5-flash` | `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
+| **Groq** (free tier) | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | https://console.groq.com/keys |
+| **Anthropic** | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` | https://console.anthropic.com/ |
+
+1. Set the API key for your chosen provider as an environment variable. The extension reads `process.env`, so export it in your shell (or in a VS Code `launch.json` `env` block for the Extension Development Host — a `.env` file is *not* auto-loaded).
+2. Pick the provider: `secuguard.ai.provider` (`gemini`/`groq`/`anthropic`, default `gemini`). The env var defaults per provider unless you set `secuguard.ai.apiKeyEnvVar`.
+3. Turn on `secuguard.ai.enabled` in Settings.
+4. Click **Explain** or **Generate Fix** on any finding (CodeLens, Quick Fix, Tree View context menu, or the dashboard). Only the flagged snippet + minimal context is sent — never full files.
 
 ### Enable Semgrep for deeper coverage (optional)
 
