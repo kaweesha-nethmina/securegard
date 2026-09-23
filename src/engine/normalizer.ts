@@ -43,7 +43,21 @@ export function normalize(
       const id = stableId(primary);
       const prior = existing.get(id);
 
-      const status: VulnStatus = prior ? prior.status : baselineMode ? "todo" : "open";
+      // If someone marked this as fixed but the scanner still detects it,
+      // it's a regression — reopen it and record why.
+      const reappeared = prior?.status === "fixed";
+      const status: VulnStatus = reappeared ? "open" : prior ? prior.status : baselineMode ? "todo" : "open";
+      const statusHistory = reappeared
+        ? [
+            ...(prior?.statusHistory ?? []),
+            {
+              status: "open" as VulnStatus,
+              changedBy: "secuguard (auto)",
+              changedAt: now,
+              note: "Reopened automatically — the vulnerability is still present after being marked fixed.",
+            },
+          ]
+        : (prior?.statusHistory ?? []);
 
       results.push({
         id,
@@ -73,7 +87,7 @@ export function normalize(
         aiConfidence: prior?.aiConfidence,
         falsePositiveReason: prior?.falsePositiveReason,
         baseline: prior?.baseline ?? baselineMode,
-        statusHistory: prior?.statusHistory ?? [],
+        statusHistory,
       });
     }
   }

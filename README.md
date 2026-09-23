@@ -50,6 +50,13 @@ git commit -m "chore(secuguard): track vulnerability findings"
 2. Every status change appends an entry to that finding's `statusHistory` (status, `@username`, timestamp, optional note) and is attributed to your GitHub username — resolved from `secuguard.attribution.githubUsername`, then the `gh` CLI, then `git config user.name` (shown as unverified), with a one-time prompt as a last resort. Change it anytime via **SecuGuard: Set GitHub Username**.
 3. Commit the changed files: `git add .secuguard && git commit -m "fix(secuguard): triage SG-xxx as fixed"`.
 
+**Rescans never lose your work.** Re-running *SecuGuard: Scan Workspace* is non-destructive: statuses, notes, assignees, and `statusHistory` are all preserved, findings that disappeared from the latest scan are kept (history stays verifiable), and only genuinely changed findings are rewritten. Two extra behaviors on rescan:
+
+- **Regression detection** — if a finding you marked **fixed** is still detected by the next scan, SecuGuard automatically reopens it (`status: open`) and appends a `secuguard (auto)` history entry saying the vulnerability is still present.
+- **Stale-code IDs** — if you edit the file so a vulnerability moves lines, that appears as a *new* finding (IDs are anchored to file+line+snippet), while the old one stays for the record.
+
+The dashboard also has a **Status** filter (Active / All / per-status) so you can view **fixed**, suppressed, and won't-fix findings — not just the open backlog.
+
 **Pulling teammates' updates:** after `git pull`, SecuGuard auto-watches `.secuguard/findings/` and refreshes; you can also run **SecuGuard: Reload Findings from Disk** to force it.
 
 **Conflicts are scoped per finding.** Because each finding lives in its own file, two people editing *different* findings never conflict. The only conflict is when two people change the *same* finding's status in the same window — resolve it like any Git conflict: pick the file's version and keep both history entries if you like, then commit. The audit log uses `merge=union` (see `.gitattributes`), so concurrent appends merge line-by-line without conflict.

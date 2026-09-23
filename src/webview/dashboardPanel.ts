@@ -99,7 +99,7 @@ function renderHtml(vulns: Vulnerability[]): string {
     .map((c, i) => `${(i / (days.length - 1)) * 560},${80 - (c / maxTrend) * 70}`)
     .join(" ");
 
-  const rows = active
+  const rows = vulns
     .sort((a, b) => order.indexOf(a.severity) - order.indexOf(b.severity))
     .map(
       (v) => `
@@ -267,14 +267,21 @@ function renderHtml(vulns: Vulnerability[]): string {
         .map((c) => `<option value="${c}">${c}</option>`)
         .join("")}
     </select>
+    <select class="filter" id="statusFilter">
+      <option value="active" selected>Active</option>
+      <option value="">All statuses</option>
+      ${["open", "triaged", "todo", "fixed", "wont_fix", "false_positive"]
+        .map((s) => `<option value="${s}">${s.replace("_", " ")}</option>`)
+        .join("")}
+    </select>
     <button class="action" id="exportSarif">Export SARIF</button>
     <button class="action" id="exportMd">Export Markdown</button>
     <button class="action" id="rescan">Rescan Workspace</button>
   </div>
 
   ${
-    active.length === 0
-      ? `<div class="empty-state">✅ No active findings. Run <b>SecuGuard: Scan Workspace</b> to check for vulnerabilities.</div>`
+    vulns.length === 0
+      ? `<div class="empty-state">✅ No findings yet. Run <b>SecuGuard: Scan Workspace</b> to check for vulnerabilities.</div>`
       : `<table>
     <thead><tr><th>Severity</th><th>Finding</th><th>Location</th><th>Category</th><th>Status</th><th>Actions</th></tr></thead>
     <tbody id="rows">${rows}</tbody>
@@ -286,21 +293,30 @@ function renderHtml(vulns: Vulnerability[]): string {
   const search = document.getElementById('search');
   const sevFilter = document.getElementById('severityFilter');
   const catFilter = document.getElementById('categoryFilter');
+  const statusFilter = document.getElementById('statusFilter');
 
   function applyFilters() {
     const q = (search.value || '').toLowerCase();
     const sev = sevFilter.value;
     const cat = catFilter.value;
+    const status = statusFilter.value;
     document.querySelectorAll('#rows tr').forEach(tr => {
       const matchesSearch = !q || tr.dataset.search.includes(q);
       const matchesSev = !sev || tr.dataset.severity === sev;
       const matchesCat = !cat || tr.dataset.category === cat;
-      tr.style.display = (matchesSearch && matchesSev && matchesCat) ? '' : 'none';
+      let matchesStatus = false;
+      if (status === 'active') {
+        matchesStatus = !['fixed', 'wont_fix', 'false_positive'].includes(tr.dataset.status);
+      } else {
+        matchesStatus = !status || tr.dataset.status === status;
+      }
+      tr.style.display = (matchesSearch && matchesSev && matchesCat && matchesStatus) ? '' : 'none';
     });
   }
   search?.addEventListener('input', applyFilters);
   sevFilter?.addEventListener('change', applyFilters);
   catFilter?.addEventListener('change', applyFilters);
+  statusFilter?.addEventListener('change', applyFilters);
 
   document.querySelectorAll('.icon-btn').forEach(btn => {
     btn.addEventListener('click', () => {
