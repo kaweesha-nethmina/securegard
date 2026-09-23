@@ -1,9 +1,13 @@
 import * as vscode from "vscode";
 import { Database } from "./storage/database";
 import { Orchestrator } from "./engine/orchestrator";
+import { ScannerAdapter } from "./types";
 import { PatternScanner } from "./scanners/patternScanner";
 import { SecretsScanner } from "./scanners/secretsScanner";
 import { SemgrepAdapter } from "./scanners/semgrepAdapter";
+import { QualityScanner } from "./scanners/qualityScanner";
+import { TestCoverageScanner } from "./scanners/testCoverageScanner";
+import { DocScanner } from "./scanners/docScanner";
 import { DiagnosticsProvider } from "./providers/diagnosticsProvider";
 import { SecurityExplorerProvider, SummaryProvider } from "./providers/treeViewProvider";
 import { SecuGuardCodeLensProvider } from "./providers/codeLensProvider";
@@ -42,11 +46,39 @@ export function activate(context: vscode.ExtensionContext) {
 
   const db = new Database(workspaceRoot, baselineOnFirstRun);
 
-  const scanners: (PatternScanner | SecretsScanner | SemgrepAdapter)[] = [
+  const scanners: ScannerAdapter[] = [
     new PatternScanner(excludeGlobs),
     new SecretsScanner(excludeGlobs),
   ];
   if (useSemgrep) scanners.push(new SemgrepAdapter());
+
+  const qualityEnabled = cfg.get<boolean>("quality.enabled", true);
+  if (qualityEnabled) {
+    scanners.push(
+      new QualityScanner(
+        excludeGlobs,
+        {
+          maxFunctionLines: cfg.get<number>("quality.maxFunctionLines", 80),
+          maxNestingDepth: cfg.get<number>("quality.maxNestingDepth", 4),
+        }
+      )
+    );
+  }
+
+  const testCoverageEnabled = cfg.get<boolean>("testCoverage.enabled", true);
+  if (testCoverageEnabled) {
+    scanners.push(
+      new TestCoverageScanner({
+        excludeGlobs,
+        testFileGlobs: cfg.get<string[]>("testCoverage.testFileGlobs", ["**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/__tests__/**"]),
+      })
+    );
+  }
+
+  const docsEnabled = cfg.get<boolean>("docs.enabled", true);
+  if (docsEnabled) {
+    scanners.push(new DocScanner(excludeGlobs));
+  }
 
   const orchestrator = new Orchestrator(scanners, db, workspaceRoot);
   const diagnostics = new DiagnosticsProvider();

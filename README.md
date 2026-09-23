@@ -1,17 +1,32 @@
-# SecuGuard — VS Code Security Vulnerability Detector
+# SecuGuard — Personal QA Engineer for VS Code
 
-An embedded security QA engineer for VS Code: scans your workspace across languages, classifies findings by severity/CWE/OWASP, explains exploitability in plain English, and manages the full remediation lifecycle (save, TODO, suppress, fix, re-verify) — not just a one-shot report.
+An embedded security + quality engineer for VS Code: scans your workspace for vulnerabilities *and* quality debt, explains exploitability in plain English, generates unit tests, drafts a pre-PR **QA Readiness Check**, and produces a consolidated **Final QA Report** — all local-first, dependency-free, and mindful of free-tier AI quotas.
 
 ## What's inside
 
-- **Zero-dependency built-in scan engine** (`src/scanners/patternScanner.ts`) — 25+ rules covering SQL/command/LDAP/NoSQL injection, XSS, insecure deserialization, weak crypto, insecure randomness, path traversal, SSRF, CORS misconfig, JWT `alg:none`, open redirect, ReDoS, and more. Works immediately, no external tools required.
-- **Entropy-based secrets scanner** (`src/scanners/secretsScanner.ts`) — catches high-entropy hardcoded tokens/keys that plain regexes miss, using Shannon entropy scoring.
-- **Optional Semgrep adapter** (`src/scanners/semgrepAdapter.ts`) — if `semgrep` is on your `PATH`, SecuGuard automatically layers in `p/security-audit` + `p/owasp-top-ten` for much broader multi-language coverage.
-- **AI triage** (`src/ai/triageService.ts`, opt-in) — provider-swappable (Gemini/Groq/Anthropic). Sends only the flagged snippet (never full files) for a contextual exploitability assessment, confidence score, and suggested fix. Prompt-injection-resistant: code is explicitly framed as data, not instructions.
-- **Full VS Code UI**: Problems panel diagnostics, a "Security Explorer" tree view (Severity → File → Finding), inline CodeLens actions, hover explanations, Quick Fix actions (`Ctrl+.`), and an interactive HTML dashboard (charts, search, filters, inline status changes all in one row per finding). Every action button and dropdown shows a hover tooltip, and the dashboard/panel tabs use the red-orange SecuGuard shield icon. All theme-aware with zero external CDN dependencies.
-- **Lifecycle management**: Save to backlog, insert a linked `// TODO(security): ...` comment, or suppress with a required reason (written to `.secuguard/ignore.yml` so the team can see *why*).
-- **Report export (one button, pick the type)**: professional Security-QA **Markdown**, spreadsheet-friendly **CSV**, **SARIF**, or **JSON** for CI, GitHub/GitLab security tabs, or sharing with a team.
-- **Local-first, team-shared**: everything is stored in `.secuguard/` — one small JSON file per finding (`findings/<id>.json`), plus `meta.json` and an append-only `audit-log.ndjson`. Commit the folder so teammates see the same findings and status history. No code leaves your machine unless you explicitly enable AI triage — and even then only the flagged snippet is sent, not the file.
+### Security scanning (built-in)
+- **Zero-dependency scan engine** (`src/scanners/patternScanner.ts`) — 25+ rules covering SQL/command/LDAP/NoSQL injection, XSS, insecure deserialization, weak crypto, insecure randomness, path traversal, SSRF, CORS misconfig, JWT `alg:none`, open redirect, ReDoS, and more.
+- **Entropy-based secrets scanner** (`src/scanners/secretsScanner.ts`) — catches high-entropy hardcoded tokens/keys using Shannon entropy scoring.
+- **Optional Semgrep adapter** (`src/scanners/semgrepAdapter.ts`) — layers `p/security-audit` + `p/owasp-top-ten` when `semgrep` is on your `PATH`.
+
+### QA scanning (new)
+- **Quality scanner** (`qualityScanner.ts`) — INFO/LOW findings for TODO/FIXME/HACK/XXX markers, oversized functions (> `secuguard.quality.maxFunctionLines`, default 80), deeply nested code (> `maxNestingDepth`, default 4), and leftover debug statements (`console.log`/`debugger`/`print`/`pdb.set_trace`).
+- **Test-coverage scanner** (`testCoverageScanner.ts`) — for every exported symbol (JS/TS `export function/class/const`; Python top-level `def`/`class`), checks whether any test file (per `secuguard.testCoverage.testFileGlobs`) references it by name. Flags gaps as `.test-coverage` findings with effort ≈ *small*.
+- **Doc scanner** (`docScanner.ts`) — flags exported symbols without a JSDoc/docstring above the definition (INFO, effort *trivial*).
+- Each scanner has its own enabled setting (`secuguard.quality.enabled`, `secuguard.testCoverage.enabled`, `secuguard.docs.enabled`).
+
+### AI (opt-in, provider-swappable, quota-resilient)
+`src/ai/triageService.ts` talks to **Gemini**, **Groq**, or **Anthropic** with per-task token budgets and model hints:
+
+| Task | Budget (tokens) | Gemini hint | Groq hint |
+|---|---|---|---|
+| `explain` / `classify` | 350 | `gemini-2.5-flash-lite` | `llama-3.3-8b-instant` |
+| `testGeneration` | 900 | `gemini-2.5-flash` | `llama-3.3-70b-versatile` |
+| `reportSection` | 1200 | `gemini-2.5-flash` | `llama-3.3-70b-versatile` |
+
+An explicit `secuguard.ai.model` **always wins** over the hints. Only the flagged snippet + minimal context is ever sent — never full files — and snippets are framed as *data, not instructions* to resist prompt injection.
+
+**Gemini + Groq together (failover + batching):** if the primary provider returns a 429/quota error, SecuGuard retries once against `secuguard.ai.fallbackProvider` (automatic default: gemini→groq, groq→gemini; not used for anthropic). A one-time status-bar notice reports the fallback, and the audit log records `ai_triage (via groq, gemini quota exceeded)`. Batch generation is concurrency-limited by `secuguard.ai.maxConcurrentCalls` (default 2) so free tiers aren't hammered. "Refresh AI Analysis" is exposed in CodeLens, the dashboard, the tree, and the Explain & Fix panel.
 
 ## Getting started
 
@@ -20,97 +35,128 @@ npm install
 npm run build     # bundles src/extension.ts -> dist/extension.js
 ```
 
-Then press **F5** in VS Code (with this folder open) to launch an Extension Development Host. Open the `test-corpus/` folder inside that host window and run **SecuGuard: Scan Workspace** from the Command Palette — it's pre-seeded with realistic vulnerable snippets so you'll see findings immediately.
+Press **F5** in VS Code (with this folder open) to launch an Extension Development Host. Open the `test-corpus/` folder inside that host window and run **SecuGuard: Scan Workspace**.
 
-### Enable optional AI triage
+### Enable optional AI (triage, tests, narrative)
 
-AI triage is provider-swappable and is **free** by default via Google Gemini. Three providers are supported:
-
-| Provider | Default model | Default env var | Get a key |
+| Provider | Model | Default env var | Key |
 |---|---|---|---|
 | **Gemini** (default, free tier) | `gemini-2.5-flash` | `GEMINI_API_KEY` | https://aistudio.google.com/apikey |
 | **Groq** (free tier) | `llama-3.3-70b-versatile` | `GROQ_API_KEY` | https://console.groq.com/keys |
 | **Anthropic** | `claude-sonnet-4-6` | `ANTHROPIC_API_KEY` | https://console.anthropic.com/ |
 
-1. Set the API key for your chosen provider as an environment variable. The extension reads `process.env`: either export it in your shell, or add it to the project's `.env` file — pressing **F5** now auto-loads `.env` via `envFile` in `.vscode/launch.json` (the file itself is gitignored).
-2. Pick the provider: `secuguard.ai.provider` (`gemini`/`groq`/`anthropic`, default `gemini`). The env var defaults per provider unless you set `secuguard.ai.apiKeyEnvVar`.
-3. Turn on `secuguard.ai.enabled` in Settings.
-4. Click **Explain & Fix** on any finding (CodeLens, Quick Fix, Tree View context menu, or the dashboard). It opens the right-side panel with the attack type, a fix guide, and AI-contextual triage if enabled. Only the flagged snippet + minimal context is sent — never full files.
+1. Set the API key(s) as environment variables. The extension reads `process.env`: export in your shell, or add to the project's `.env` — pressing **F5** auto-loads it via `envFile` in `.vscode/launch.json` (the file is gitignored).
+2. Pick the primary provider (`secuguard.ai.provider`), optionally the fallback (`secuguard.ai.fallbackProvider`).
+3. Turn on `secuguard.ai.enabled`.
+4. Click **Explain & Fix** on any finding.
 
-### Enable Semgrep for deeper coverage (optional)
+## The QA workflow
 
-```bash
-pip install semgrep   # or: brew install semgrep
+### 1. Scan → tabbed dashboard
+**SecuGuard: Open Dashboard** now has tabs: **Overview** (KPI cards across all categories, QA Health Score, severity donut, category bars, 14-day trend, quick actions), **Security**, **Quality** (filterable by TODO / oversized / nesting / debug chips), **Test Coverage** (with *x of y exported symbols tested* summary + one-click generation), **Documentation**, and **Reports**. Tab selection persists (`setState`), and a global search filters the active tab.
+
+**QA Health Score** (0–100, tooltip explains the formula): starts at 100; −10 critical, −6 high, −3 medium, −1 low, −0.5 info; −3 oversized functions; −1 deep nesting/debug; −0.5 missing tests; −0.25 missing docs; clamped at 0.
+
+### 2. QA Readiness Check (pre-PR gate)
+**SecuGuard: QA Readiness Check** scans the **entire workspace** (so the QA section — Quality / Test Coverage / Documentation — always reflects the whole project, not just the files being committed), then diffs your working tree against the base branch (`secuguard.readinessCheck.baseBranch`, default `main`, falling back to `git diff --name-only HEAD`) to show a 5-row ✅/❌ checklist for the *new* changes:
+
+1. No **new** critical/high findings
+2. No **new** TODO/FIXME/HACK markers
+3. Every **new** exported symbol has a test
+4. No **new** debug statements
+5. No **new** functions past the max-lines threshold
+
+Below the diff-scoped checklist, a **Project-wide QA state** card shows the full results of the whole-workspace scan (files scanned, scan time, and active findings per category) with an **Open QA Dashboard** shortcut. Rows expand with click-to-jump items and there's a **Copy as PR comment** button — a ready-to-paste GitHub/PR comment listing the change-scoped checks plus the project-wide QA summary:
+
 ```
-SecuGuard detects it automatically on the next scan — no configuration needed.
+## 🛡 SecuGuard QA Readiness ❌ FAIL
+
+**Base branch:** `main` · **Changed files:** 3 · Scan: 412ms
+
+- ✅ No new critical/high severity findings (0)
+- ❌ No new TODO/FIXME/HACK markers (1)
+- ...
+
+<details>
+<summary>Details</summary>
+
+### No new TODO/FIXME/HACK markers
+- `src/auth.ts:42` — TODO marker left in code
+```
+The command also runs from the Command Palette, a button in the sidebar **Summary** tree, and a button in the readiness panel.
+
+### 3. Unit tests, single or batch
+- **SecuGuard: Generate Test for Finding** (🧪 button on test-coverage rows, code lens / tree) — drafts a test in a preview editor, then *Insert into file*. Style is matched from a nearby existing test when one exists.
+- **SecuGuard: Generate All Missing Tests** — batches all test-coverage gaps (batch size `secuguard.ai.testGenBatchSize`, default 6), groups by source file, and runs with a cancellable progress notification (`Generating tests: batch X of Y (provider: gemini)`). Results land in the **test review webview**: edit any test inline, Accept / Skip per row, Accept All, then **Insert Accepted** writes each file (appending to an existing test file) and marks the finding triaged with a status-history note: `test generated by AI (<provider>), inserted by @<user>`.
+
+### 4. Final QA report
+**SecuGuard: Generate Final QA Report** (or the **Reports** tab) produces a deterministic consolidated report — Executive Summary, Security Findings, Quality Debt, Test Coverage Gaps, Documentation Gaps, Team Activity (from `statusHistory`), and a 5-point Sign-off checklist matching the readiness rows — with an **optional AI-written executive summary** (task `reportSection`) behind a checkbox. Exported as Markdown (`toFinalQaReport()`) and/or a self-contained HTML report (same theming, zero CDNs). Raw CSV / SARIF / JSON exports remain unchanged.
 
 ## Team workflow with git
 
-`.secuguard/` is meant to be committed to your repository so every teammate shares the same vulnerability board (findings, status changes, and who made them).
+`.secuguard/` is meant to be committed so every teammate shares the same board (findings, status, who changed them).
 
 ```bash
 git add .secuguard .gitattributes
-git commit -m "chore(secuguard): track vulnerability findings"
+git commit -m "chore(secuguard): track findings"
 ```
 
-**The loop:**
-
-1. Scan / change status as usual (Status dropdown in the dashboard, **Explain & Fix**, **Save to Backlog**, **Add as TODO**, **Mark False Positive**, **Mark Fixed**, or the tree-view context menu).
-2. Every status change appends an entry to that finding's `statusHistory` (status, `@username`, timestamp, optional note) and is attributed to your GitHub username — resolved from `secuguard.attribution.githubUsername`, then the `gh` CLI, then `git config user.name` (shown as unverified), with a one-time prompt as a last resort. Change it anytime via **SecuGuard: Set GitHub Username**.
-3. Commit the changed files: `git add .secuguard && git commit -m "fix(secuguard): triage SG-xxx as fixed"`.
-
-**Rescans never lose your work.** Re-running *SecuGuard: Scan Workspace* is non-destructive: statuses, notes, assignees, and `statusHistory` are all preserved, findings that disappeared from the latest scan are kept (history stays verifiable), and only genuinely changed findings are rewritten. Two extra behaviors on rescan:
-
-- **Regression detection** — if a finding you marked **fixed** is still detected by the next scan, SecuGuard automatically reopens it (`status: open`) and appends a `secuguard (auto)` history entry saying the vulnerability is still present.
-- **Stale-code IDs** — if you edit the file so a vulnerability moves lines, that appears as a *new* finding (IDs are anchored to file+line+snippet), while the old one stays for the record.
-
-The dashboard also has a **Status** filter (Active / All / per-status) so you can view **fixed**, suppressed, and won't-fix findings — not just the open backlog.
-
-**Pulling teammates' updates:** after `git pull`, SecuGuard auto-watches `.secuguard/findings/` and refreshes; you can also run **SecuGuard: Reload Findings from Disk** to force it.
-
-**Conflicts are scoped per finding.** Because each finding lives in its own file, two people editing *different* findings never conflict. The only conflict is when two people change the *same* finding's status in the same window — resolve it like any Git conflict: pick the file's version and keep both history entries if you like, then commit. The audit log uses `merge=union` (see `.gitattributes`), so concurrent appends merge line-by-line without conflict.
+- Every status change appends to that finding's `statusHistory` (status, `@username`, timestamp, note), attributed via `secuguard.attribution.githubUsername` → `gh` CLI → `git config user.name`.
+- **Rescans are non-destructive** — status/notes/history survive. Regression-detection reopens a `fixed` finding if it reappears; a moved line becomes a new ID while the old record stays.
+- After `git pull`, findings auto-reload; conflicts are scoped per finding (one JSON file each), and the audit log merges with `merge=union`.
 
 ## Key commands
 
 | Command | What it does |
 |---|---|
 | `SecuGuard: Scan Workspace` | Full scan across all scanners |
-| `SecuGuard: Scan Current File` | Fast incremental scan (also runs automatically on save) |
-| `SecuGuard: Open Dashboard` | Interactive charts, search/filter, inline status changes |
-| `SecuGuard: Explain & Fix This Vulnerability` | Opens the right-side panel: attack type, fix guide, and AI-contextual triage if enabled |
-| `SecuGuard: Save to Vulnerability List` | Marks as triaged/tracked |
-| `SecuGuard: Add as TODO` | Inserts a linked `// TODO(security): [SG-xxxx] ...` comment |
-| `SecuGuard: Mark False Positive` | Requires a reason; persisted to `.secuguard/ignore.yml` |
-| `SecuGuard: Mark Fixed` | Attribute and record that a finding is fixed |
-| `SecuGuard: Reload Findings from Disk` | Re-read `.secuguard/findings/` after a `git pull` (also auto-watched) |
-| `SecuGuard: Set GitHub Username` | Change the username used to attribute status changes |
-| `SecuGuard: Export Report` | One export — asks for the type: Markdown QA report / CSV / SARIF / JSON |
+| `SecuGuard: Scan Current File` | Fast incremental scan (also on save) |
+| `SecuGuard: Open Dashboard` | Tabbed dashboard: Overview/Security/Quality/Test Coverage/Documentation/Reports |
+| `SecuGuard: QA Readiness Check` | Pre-PR gate against the base branch + copy-as-PR-comment |
+| `SecuGuard: Explain & Fix This Vulnerability` | Attack type + fix guide + AI triage (if enabled) |
+| `SecuGuard: Refresh AI Analysis` | Re-run AI triage on an already-explained finding |
+| `SecuGuard: Generate Test for Finding` | AI-draft a unit test, preview, insert |
+| `SecuGuard: Generate All Missing Tests` | Batch-generate tests for every gap with a review panel |
+| `SecuGuard: Generate Final QA Report` | Markdown + HTML consolidated report (optional AI summary) |
+| `SecuGuard: Export Report` | Raw export — Markdown QA / CSV / SARIF / JSON |
+| `SecuGuard: Save to Vulnerability List` / `Add as TODO` / `Mark False Positive` / `Mark Fixed` | Lifecycle management |
+| `SecuGuard: Reload Findings from Disk` | Re-read `.secuguard/findings/` after `git pull` |
+| `SecuGuard: Set GitHub Username` | Username used to attribute status changes |
+
+## Settings
+
+Key settings (all under `secuguard.*`): `quality.enabled`, `quality.maxFunctionLines` (80), `quality.maxNestingDepth` (4), `testCoverage.enabled`, `testCoverage.testFileGlobs` (`**/*.test.*`, `**/*.spec.*`, `**/test_*.py`, `**/__tests__/**`), `docs.enabled`, `readinessCheck.baseBranch` (`main`), `ai.enabled`, `ai.provider`, `ai.model`, `ai.fallbackProvider`, `ai.maxConcurrentCalls` (2), `ai.testGenBatchSize` (6), `ai.apiKeyEnvVar`, `scanOnSave`, `severityThreshold`, `excludeGlobs`, `useSemgrepIfAvailable`, `attribution.githubUsername`, `attribution.autoDetect`, `baselineOnFirstRun`.
 
 ## Architecture
 
-The detection engine (`Orchestrator` + `ScannerAdapter` interface) is intentionally decoupled from the VS Code API — every scanner just implements `scan(paths, root) -> RawFinding[]`. That means the same `src/engine` + `src/scanners` + `src/storage` code could be lifted into a headless CLI or CI action later without rewriting detection logic, exactly as recommended in the original project brief.
+Detection (`Orchestrator` + `ScannerAdapter`) is decoupled from the VS Code API — scanners just implement `scan(paths, root) -> RawFinding[]`, so the same `src/engine` + `src/scanners` + `src/storage` could run headless later.
 
 ```
 Orchestrator
- ├─ PatternScanner        (built-in, always available)
- ├─ SecretsScanner        (built-in, always available)
- └─ SemgrepAdapter        (optional, auto-detected)
+ ├─ PatternScanner         (security, always available)
+ ├─ SecretsScanner         (entropy, always available)
+ ├─ QualityScanner         (TODO/long/nesting/debug — gated by setting)
+ ├─ TestCoverageScanner    (exported-symbol coverage — gated by setting)
+ ├─ DocScanner             (missing docs — gated by setting)
+ └─ SemgrepAdapter         (optional, auto-detected)
         ↓
    Normalizer  (dedupes by file+line+rule, stable hash IDs, merges scanner names)
         ↓
    Database    (.secuguard/findings/<id>.json + meta.json + audit-log.ndjson)
         ↓
- Diagnostics / TreeView / CodeLens / Hover / CodeActions / Dashboard
+ Diagnostics / TreeView (Category→Severity→File→Finding when mixed) / CodeLens /
+ Hover / CodeActions / Dashboard / ReadinessPanel / TestReviewPanel
 ```
 
-## Extending the rule set
+## Extending
 
-Add entries to `src/rules/rules.ts` — each rule is a regex + CWE/OWASP mapping + remediation string, scoped to one or more file extensions (or `"*"` for all languages). No build-system changes needed.
+- **Rules:** add entries to `src/rules/rules.ts` (regex + CWE/OWASP + remediation, scoped per extension or `"*"`).
+- **Scanners:** implement `ScannerAdapter` (`isAvailable()` + `scan()`), then register in `src/extension.ts` behind a setting.
 
 ## Roadmap ideas (not yet implemented)
 
-- Java/Go/Ruby/C# dedicated scanner adapters (SpotBugs+FindSecBugs, gosec, Brakeman, Security Code Scan) alongside the Semgrep fallback
-- SCA / dependency scanning (OSV-Scanner, npm audit, pip-audit) as additional adapters
-- IaC scanning (Checkov/tfsec) and container scanning (Trivy/Grype) adapters
-- CI headless mode (`secuguard scan --fail-on critical`) by extracting `src/engine` + `src/scanners` into a standalone CLI package
-- Swap the per-finding JSON files under `.secuguard/findings/` for SQLite if a workspace grows very large
+- Per-language adapters (SpotBugs/FindSecBugs, gosec, Brakeman, Security Code Scan)
+- SCA / dependency scanning (OSV-Scanner, npm audit, pip-audit)
+- IaC (Checkov/tfsec) and container (Trivy/Grype) adapters
+- CI headless mode (`secuguard scan --fail-on critical`)
+- SQLite backend if a workspace's `.secuguard/findings/` grows very large

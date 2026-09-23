@@ -77,6 +77,7 @@ export function normalize(
         codeSnippet: primary.codeSnippet,
         sourceScanner: dupes.map((d) => d.sourceScanner).join(", "),
         suggestedFix: primary.remediation,
+        effort: primary.effort,
         status: prior?.status === "false_positive" ? "false_positive" : status,
         firstDetected: prior?.firstDetected ?? now,
         lastSeen: now,

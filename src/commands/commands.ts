@@ -4,14 +4,18 @@ import * as path from "path";
 import { Database } from "../storage/database";
 import { Orchestrator } from "../engine/orchestrator";
 import { StatusHistoryEntry, Vulnerability, VulnStatus } from "../types";
-import { triageVulnerability, AiProvider, PROVIDER_DEFAULTS } from "../ai/triageService";
+import { triageVulnerability, AiProvider, AiTask, PROVIDER_DEFAULTS, resolveModelForTask, setMaxConcurrentCalls, generateUnitTest, GeneratedTest, generateReportSection } from "../ai/triageService";
 import { RULES } from "../rules/rules";
-import { toSarif, toMarkdownReport, toCsvReport } from "../utils/sarif";
+import { toSarif, toMarkdownReport, toCsvReport, buildQaReportData, toFinalQaReport, toFinalQaHtmlReport } from "../utils/sarif";
 import { resolveIdentity, clearIdentityCache } from "../utils/identity";
 import { DiagnosticsProvider } from "../providers/diagnosticsProvider";
 import { SecurityExplorerProvider, SummaryProvider } from "../providers/treeViewProvider";
 import { SecuGuardCodeLensProvider } from "../providers/codeLensProvider";
 import { DashboardPanel } from "../webview/dashboardPanel";
+import { ReadinessPanel } from "../webview/readinessPanel";
+import { TestReviewPanel, ReviewTestRow } from "../webview/testReviewPanel";
+import { runReadinessCheck, buildPrComment } from "../engine/readiness";
+import { isTestFile } from "../scanners/shared/exportedSymbols";
 
 export interface Wiring {
   db: Database;
@@ -31,23 +35,132 @@ function config() {
 
 let extensionUri: vscode.Uri | undefined;
 
+let failoverNotified = false;
+
 function aiProvider(): AiProvider {
   const p = config().get<string>("ai.provider", "gemini");
   return p === "anthropic" || p === "groq" || p === "gemini" ? p : "gemini";
 }
 
-function aiModel(): string {
-  const provider = aiProvider();
+function aiModelForTask(task: AiTask): string {
   const configured = config().get<string>("ai.model", "");
-  // Respect an explicit user-set model, otherwise fall back to the selected
-  // provider's default (handles the package default being Gemini's model).
-  if (configured && configured !== PROVIDER_DEFAULTS.gemini.model) return configured;
-  return PROVIDER_DEFAULTS[provider].model;
+  return resolveModelForTask(task, aiProvider(), configured);
 }
 
 function aiApiKeyEnvVar(): string {
   const configured = config().get<string>("ai.apiKeyEnvVar", "");
   return configured || PROVIDER_DEFAULTS[aiProvider()].envVar;
+}
+
+/**
+ * Resolves the fallback provider for 429/quota failover. Defaults: gemini→groq,
+ * groq→gemini, none for anthropic. Reuses each provider's own key env var.
+ */
+function fallbackProviderConfig(): { provider: AiProvider | undefined; apiKey: string | undefined; model: string | undefined } {
+  const primary = aiProvider();
+  if (primary === "anthropic") return { provider: undefined, apiKey: undefined, model: undefined };
+  const configured = config().get<string>("ai.fallbackProvider", "");
+  let fb: AiProvider | undefined;
+  if (configured === "groq" || configured === "gemini") {
+    fb = configured;
+  } else {
+    fb = primary === "gemini" ? "groq" : "gemini";
+  }
+  if (fb === primary) fb = undefined;
+  if (!fb) return { provider: undefined, apiKey: undefined, model: undefined };
+  return {
+    provider: fb,
+    apiKey: process.env[PROVIDER_DEFAULTS[fb].envVar],
+    model: resolveModelForTask("explain", fb, config().get<string>("ai.model", "")),
+  };
+}
+
+function notifyFailoverOnce(from: AiProvider, to: AiProvider): void {
+  if (!failoverNotified) {
+    failoverNotified = true;
+    vscode.window.setStatusBarMessage(`$(warning) SecuGuard: ${from} quota exceeded — fell back to ${to} for this call.`, 5000);
+  }
+}
+
+/** First ~150 lines of a nearby existing test file, for AI style matching. */
+function styleReferenceFor(v: Vulnerability, workspaceRoot: string): string | undefined {
+  const globs = config().get<string[]>("testCoverage.testFileGlobs", ["**/*.test.*", "**/*.spec.*", "**/test_*.py", "**/__tests__/**"]);
+  const sourceAbs = path.join(workspaceRoot, v.file);
+  const dirs = [
+    path.dirname(sourceAbs),
+    path.join(workspaceRoot, "tests"),
+    path.join(workspaceRoot, "test"),
+    path.join(workspaceRoot, "__tests__"),
+  ];
+  for (const dir of dirs) {
+    if (!fs.existsSync(dir)) continue;
+    let entries: string[] = [];
+    try {
+      entries = fs.readdirSync(dir);
+    } catch {
+      continue;
+    }
+    const match = entries.find((name) => {
+      const abs = path.join(dir, name);
+      if (!fs.statSync(abs).isFile()) return false;
+      const rel = path.relative(workspaceRoot, abs).split(path.sep).join("/");
+      return isTestFile(rel, globs);
+    });
+    if (match) {
+      try {
+        const lines = fs.readFileSync(path.join(dir, match), "utf8").split(/\r?\n/).slice(0, 150);
+        return lines.join("\n").slice(0, 4000);
+      } catch {
+        // unreadable — try next dir
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Writes a generated test file (append if the file exists) and records status history. */
+async function insertGeneratedTest(
+  w: Wiring,
+  findingId: string,
+  gen: { testFilePath: string; testCode: string; via: string }
+): Promise<boolean> {
+  const abs = path.join(w.workspaceRoot, gen.testFilePath);
+  const existed = fs.existsSync(abs);
+  const trimmedCode = gen.testCode.trim();
+  let content = trimmedCode;
+  if (existed) {
+    const existing = fs.readFileSync(abs, "utf8");
+    const alreadyPresent = existing.includes(trimmedCode.slice(0, Math.min(120, trimmedCode.length)));
+    if (alreadyPresent) return false;
+    content = existing.trimEnd() + "\n\n" + trimmedCode + "\n";
+  }
+  fs.mkdirSync(path.dirname(abs), { recursive: true });
+  fs.writeFileSync(abs, content, "utf8");
+
+  const v = w.db.get(findingId);
+  const identity = await resolveIdentity(w.context, w.workspaceRoot);
+  if (v) {
+    const entry: StatusHistoryEntry = {
+      status: "triaged",
+      changedBy: identity.username,
+      changedAt: new Date().toISOString(),
+      ...(identity.email ? { changedByEmail: identity.email } : {}),
+      ...(identity.source ? { source: identity.source } : {}),
+      note: `test generated by AI (${gen.via}), inserted by @${identity.username}`,
+    };
+    w.db.update(v.id, { status: "triaged", statusHistory: [...(v.statusHistory ?? []), entry] });
+  }
+  w.db.addAuditEntry(
+    "generate_test",
+    `AI-generated test for ${findingId}${v ? ` (${v.title})` : ""} → ${gen.testFilePath} via ${gen.via}`,
+    identity.username
+  );
+  refreshAll(w);
+  return true;
+}
+
+function segMsg(e: any): string {
+  return String(e?.message ?? e ?? "unknown error");
 }
 
 function refreshAll(w: Wiring, stats?: { filesScanned: number; durationMs: number; scannersRun: string[] }) {
@@ -147,9 +260,49 @@ async function getApiKey(w: Wiring): Promise<string | undefined> {
   return key;
 }
 
+/** Writes one raw export (markdown/csv/sarif/json) via a save dialog. */
+async function saveRawExport(w: Wiring, format: "markdown" | "csv" | "sarif" | "json"): Promise<void> {
+  const vulns = w.db.getAll();
+  let content: string;
+  let defaultName: string;
+  let filters: { [k: string]: string[] };
+  if (format === "markdown") {
+    content = toMarkdownReport(vulns);
+    defaultName = "secuguard-security-qa-report.md";
+    filters = { Markdown: ["md"] };
+  } else if (format === "csv") {
+    content = toCsvReport(vulns);
+    defaultName = "secuguard-security-qa-report.csv";
+    filters = { "CSV (spreadsheet)": ["csv"] };
+  } else if (format === "sarif") {
+    content = JSON.stringify(toSarif(vulns, "0.1.0"), null, 2);
+    defaultName = "secuguard-report.sarif";
+    filters = { SARIF: ["sarif"] };
+  } else {
+    content = JSON.stringify(vulns, null, 2);
+    defaultName = "secuguard-report.json";
+    filters = { JSON: ["json"] };
+  }
+  // Default to the active editor's folder so exports land where the user is working.
+  const defaultDir = vscode.window.activeTextEditor
+    ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+    : w.workspaceRoot;
+  const uri = await vscode.window.showSaveDialog({
+    defaultUri: vscode.Uri.file(path.join(defaultDir, defaultName)),
+    filters,
+    saveLabel: "Save SecuGuard report",
+  });
+  if (!uri) return;
+  fs.writeFileSync(uri.fsPath, content, "utf8");
+  const exportIdentity = await resolveIdentity(w.context, w.workspaceRoot);
+  w.db.addAuditEntry("export", `Exported ${format} report to ${uri.fsPath}`, exportIdentity.username);
+  vscode.window.showInformationMessage(`SecuGuard report saved to ${uri.fsPath}`);
+}
+
 export function registerCommands(w: Wiring): vscode.Disposable[] {
   const disposables: vscode.Disposable[] = [];
   extensionUri = w.context.extensionUri;
+  setMaxConcurrentCalls(config().get<number>("ai.maxConcurrentCalls", 2));
 
   disposables.push(
     vscode.commands.registerCommand("secuguard.scanWorkspace", async () => {
@@ -278,7 +431,7 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
   );
 
   disposables.push(
-    vscode.commands.registerCommand("secuguard.explainVulnerability", async (id?: string) => {
+    vscode.commands.registerCommand("secuguard.explainVulnerability", async (id?: string, refresh = false) => {
       const v = findVuln(w, id);
       if (!v) return;
       if (!v.suggestedFix) {
@@ -288,20 +441,27 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           refreshAll(w);
         }
       }
-      if (v.aiExplanation) {
-        showExplainPanel(v);
+      if (v.aiExplanation && !refresh) {
+        showExplainPanel(v, refreshId);
         return;
       }
       if (!config().get<boolean>("ai.enabled", false)) {
         vscode.window.showWarningMessage("SecuGuard AI triage is disabled. Enable `secuguard.ai.enabled` in Settings, or read the built-in rule description in the hover/tooltip.");
-        showExplainPanel(v);
+        showExplainPanel(v, refreshId);
         return;
       }
       const apiKey = await getApiKey(w);
       if (!apiKey) return;
-      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: "SecuGuard: asking AI triage…" }, async () => {
+      const primary = aiProvider();
+      const fb = fallbackProviderConfig();
+      await vscode.window.withProgress({ location: vscode.ProgressLocation.Notification, title: refresh ? "SecuGuard: re-running AI triage…" : "SecuGuard: asking AI triage…" }, async () => {
         try {
-          const result = await triageVulnerability(v, apiKey, aiModel(), aiProvider());
+          const result = await triageVulnerability(v, apiKey, aiModelForTask("explain"), primary, {
+            fallbackProvider: fb.provider,
+            fallbackApiKey: fb.apiKey,
+            fallbackModel: fb.model,
+            onUsedFallback: notifyFailoverOnce,
+          });
           w.db.update(v.id, {
             aiExplanation: result.explanation,
             aiExploitability: result.exploitability,
@@ -310,9 +470,10 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
             status: result.isLikelyFalsePositive && v.status === "open" ? v.status : v.status,
           });
           const aiIdentity = await resolveIdentity(w.context, w.workspaceRoot);
-          w.db.addAuditEntry("ai_triage", `AI triage run for ${v.id} — confidence ${result.confidence}`, aiIdentity.username);
+          const viaText = result.usedFallback ? ` (via ${result.via}, ${primary} quota exceeded)` : ` (${result.via})`;
+          w.db.addAuditEntry("ai_triage", `AI triage run for ${v.id}${viaText} — confidence ${result.confidence}`, aiIdentity.username);
           refreshAll(w);
-          showExplainPanel(w.db.get(v.id)!);
+          showExplainPanel(w.db.get(v.id)!, refreshId);
           if (result.isLikelyFalsePositive) {
             vscode.window.showInformationMessage(`AI triage suspects "${v.title}" may be a false positive — review and suppress if confirmed.`);
           }
@@ -323,6 +484,209 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
     })
   );
 
+  // "Refresh AI Analysis" — re-runs AI triage even when an explanation already exists.
+  const refreshId = (id: string) => vscode.commands.executeCommand("secuguard.explainVulnerability", id, true);
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.refreshAiAnalysis", refreshId)
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.generateTest", async (id?: string) => {
+      const v = findVuln(w, id);
+      if (!v) return;
+      if (v.category !== "test-coverage") {
+        vscode.window.showWarningMessage("SecuGuard: test generation is only available for test-coverage findings.");
+        return;
+      }
+      if (!config().get<boolean>("ai.enabled", false)) {
+        vscode.window.showWarningMessage("SecuGuard AI is disabled. Enable `secuguard.ai.enabled` in Settings to generate tests.");
+        return;
+      }
+      const apiKey = await getApiKey(w);
+      if (!apiKey) return;
+      const provider = aiProvider();
+      const fb = fallbackProviderConfig();
+      let gen: GeneratedTest;
+      try {
+        gen = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: `SecuGuard: generating test for ${v.title}…`, cancellable: false },
+          () =>
+            generateUnitTest(v, apiKey, aiModelForTask("testGeneration"), provider, {
+              fallbackProvider: fb.provider,
+              fallbackApiKey: fb.apiKey,
+              fallbackModel: fb.model,
+              onUsedFallback: notifyFailoverOnce,
+              styleReference: styleReferenceFor(v, w.workspaceRoot),
+            })
+        );
+      } catch (e: any) {
+        vscode.window.showErrorMessage(`SecuGuard: test generation failed — ${e.message}`);
+        return;
+      }
+      vscode.window.showTextDocument(
+        await vscode.workspace.openTextDocument({ content: gen.testCode, language: v.language })
+      );
+      const action = await vscode.window.showInformationMessage(
+        `Test generated (${gen.via}). Insert as ${gen.testFilePath}?`,
+        "Insert into file",
+        "Discard"
+      );
+      if (action === "Insert into file") {
+        const ok = await insertGeneratedTest(w, v.id, gen);
+        if (ok) {
+          vscode.window.showInformationMessage(`Test inserted into ${gen.testFilePath}.`);
+        } else {
+          vscode.window.showWarningMessage("Test already exists in that file — nothing to insert.");
+        }
+      }
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.generateAllTests", async () => {
+      const vulns = w.db
+        .getAll()
+        .filter((v) => v.category === "test-coverage" && !["fixed", "false_positive", "wont_fix"].includes(v.status));
+      if (vulns.length === 0) {
+        vscode.window.showInformationMessage("SecuGuard: every exported symbol already has a test — nothing to generate.");
+        return;
+      }
+      if (!config().get<boolean>("ai.enabled", false)) {
+        vscode.window.showWarningMessage("SecuGuard AI is disabled. Enable `secuguard.ai.enabled` in Settings to generate tests.");
+        return;
+      }
+      const apiKey = await getApiKey(w);
+      if (!apiKey) return;
+
+      // Order findings grouped by source file, then split into batches.
+      const byFile = new Map<string, Vulnerability[]>();
+      for (const v of vulns) {
+        if (!byFile.has(v.file)) byFile.set(v.file, []);
+        byFile.get(v.file)!.push(v);
+      }
+      const ordered: Vulnerability[] = [];
+      for (const [, group] of byFile) ordered.push(...group);
+
+      const batchSize = Math.max(1, config().get<number>("ai.testGenBatchSize", 6));
+      const batches: Vulnerability[][] = [];
+      for (let i = 0; i < ordered.length; i += batchSize) batches.push(ordered.slice(i, i + batchSize));
+
+      const provider = aiProvider();
+      const fb = fallbackProviderConfig();
+      const model = aiModelForTask("testGeneration");
+      const results: ReviewTestRow[] = [];
+      const errors: string[] = [];
+
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: `SecuGuard: generating ${vulns.length} test(s)…`, cancellable: true },
+        async (progress, token) => {
+          for (let i = 0; i < batches.length; i++) {
+            if (token.isCancellationRequested) break;
+            progress.report({
+              message: `Generating tests: batch ${i + 1} of ${batches.length} (provider: ${provider})`,
+              increment: 100 / batches.length,
+            });
+            const batch = batches[i];
+            const settled = await Promise.allSettled(
+              batch.map((v) =>
+                generateUnitTest(v, apiKey, model, provider, {
+                  fallbackProvider: fb.provider,
+                  fallbackApiKey: fb.apiKey,
+                  fallbackModel: fb.model,
+                  onUsedFallback: notifyFailoverOnce,
+                  styleReference: styleReferenceFor(v, w.workspaceRoot),
+                })
+              )
+            );
+            settled.forEach((res, idx) => {
+              const v = batch[idx];
+              if (res.status === "fulfilled") {
+                results.push({
+                  findingId: v.id,
+                  findingTitle: v.title,
+                  sourceFile: v.file,
+                  testFilePath: res.value.testFilePath,
+                  testCode: res.value.testCode,
+                  via: res.value.via,
+                  usedFallback: res.value.usedFallback,
+                });
+              } else {
+                errors.push(`${v.file}:${v.startLine} — ${segMsg(res.reason)}`);
+              }
+            });
+          }
+        }
+      );
+
+      for (const e of errors) w.outputChannel.appendLine(`[test-generation] failed: ${e}`);
+      if (errors.length) vscode.window.showWarningMessage(`SecuGuard: ${errors.length} test(s) failed to generate — see the SecuGuard output channel.`);
+      if (results.length === 0) return;
+
+      TestReviewPanel.show(w.context, results, async (msg) => {
+        switch (msg.type) {
+          case "insertAccepted": {
+            let inserted = 0;
+            for (const t of (msg.tests || []) as { findingId: string; testCode: string; testFilePath: string; via: string }[]) {
+              const ok = await insertGeneratedTest(w, t.findingId, t);
+              if (ok) inserted++;
+            }
+            vscode.window.showInformationMessage(`SecuGuard: inserted ${inserted} generated test(s).`);
+            break;
+          }
+          case "preview": {
+            vscode.window.showTextDocument(await vscode.workspace.openTextDocument({ content: msg.code as string }));
+            break;
+          }
+        }
+      });
+    })
+  );
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.qaReadinessCheck", async () => {
+      await vscode.window.withProgress(
+        { location: vscode.ProgressLocation.Notification, title: "SecuGuard: scanning entire workspace for QA readiness…", cancellable: false },
+        async () => {
+          const start = Date.now();
+          const report = await runReadinessCheck(w.workspaceRoot, w.orchestrator, config());
+          const duration = Date.now() - start;
+          const identity = await resolveIdentity(w.context, w.workspaceRoot);
+          if (report.notGitRepo) {
+            vscode.window.showWarningMessage(
+              "SecuGuard: not a git repository (or git is unavailable) — readiness check skipped. Run it from a git worktree."
+            );
+          }
+          w.db.addAuditEntry(
+            "qa_readiness",
+            `QA readiness check (base ${report.baseBranch}, ${report.changedFiles.length} changed file(s), entire workspace scanned${report.projectWide ? ` (${report.projectWide.filesScanned} files)` : ""}, ${duration}ms, ${report.checks.filter((c) => c.ok).length}/${report.checks.length} checks passed)`,
+            identity.username
+          );
+          ReadinessPanel.show(w.context, report, async (msg) => {
+            switch (msg.type) {
+              case "copy": {
+                vscode.env.clipboard.writeText(buildPrComment(report, duration));
+                vscode.window.showInformationMessage("SecuGuard: PR comment copied to clipboard.");
+                break;
+              }
+              case "open": {
+                const doc = await vscode.workspace.openTextDocument(path.join(w.workspaceRoot, msg.file));
+                vscode.window.showTextDocument(doc, { selection: new vscode.Range(msg.line - 1, 0, msg.line - 1, 0) });
+                break;
+              }
+              case "openDashboard":
+            vscode.commands.executeCommand("secuguard.openDashboard");
+            break;
+          case "generateMissingTests":
+                vscode.commands.executeCommand("secuguard.generateAllTests");
+                break;
+            }
+          });
+          refreshAll(w);
+        }
+      );
+    })
+  );
+
   disposables.push(
     vscode.commands.registerCommand("secuguard.exportReport", async () => {
       const format = await vscode.window.showQuickPick(
@@ -330,41 +694,94 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
         { placeHolder: "Export format" }
       );
       if (!format) return;
-      const vulns = w.db.getAll();
+      if (format.startsWith("Markdown")) await saveRawExport(w, "markdown");
+      else if (format.startsWith("CSV")) await saveRawExport(w, "csv");
+      else if (format.startsWith("SARIF")) await saveRawExport(w, "sarif");
+      else await saveRawExport(w, "json");
+    })
+  );
+
+  /** Shared pipeline for the final QA report: optional AI narrative + saves chosen formats. */
+  const generateAndSaveFinalReport = async (opts: { formats: string[]; includeAi: boolean }) => {
+    const vulns = w.db.getAll();
+    const data = buildQaReportData(vulns);
+    let aiNarrative: string | undefined;
+
+    if (opts.includeAi) {
+      if (!config().get<boolean>("ai.enabled", false)) {
+        vscode.window.showWarningMessage("SecuGuard AI is disabled — report generated without an AI narrative. Enable `secuguard.ai.enabled` and re-run to include one.");
+      } else {
+        const apiKey = await getApiKey(w);
+        if (apiKey) {
+          const summary = `Total active findings: ${data.activeCount}
+Critical/high: ${data.severityCounts.critical + data.severityCounts.high}
+Categories: ${Object.entries(data.categoryCounts).map(([c, n]) => `${c}=${n}`).join(", ") || "none"}
+Checklist passing: ${data.checklist.filter((c) => c.ok).length}/${data.checklist.length}`;
+          const fb = fallbackProviderConfig();
+          try {
+            const res = await generateReportSection(summary, apiKey, aiModelForTask("reportSection"), aiProvider(), {
+              fallbackProvider: fb.provider,
+              fallbackApiKey: fb.apiKey,
+              fallbackModel: fb.model,
+              onUsedFallback: notifyFailoverOnce,
+            });
+            aiNarrative = res.text;
+            const identity = await resolveIdentity(w.context, w.workspaceRoot);
+            w.db.addAuditEntry("report_narrative", `AI executive summary generated (${res.via}${res.usedFallback ? ", via quota failover" : ""})`, identity.username);
+          } catch (e: any) {
+            vscode.window.showErrorMessage(`SecuGuard: AI narrative failed (${e.message}) — generating the report without it.`);
+          }
+        }
+      }
+    }
+
+    const identity = await resolveIdentity(w.context, w.workspaceRoot);
+    const meta = { aiNarrative, userName: identity.username };
+    const defaultDir = vscode.window.activeTextEditor
+      ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
+      : w.workspaceRoot;
+
+    for (const fmt of opts.formats) {
       let content: string;
       let defaultName: string;
       let filters: { [k: string]: string[] };
-      if (format.startsWith("Markdown")) {
-        content = toMarkdownReport(vulns);
-        defaultName = "secuguard-security-qa-report.md";
+      if (fmt === "markdown") {
+        content = toFinalQaReport(data, meta);
+        defaultName = "secuguard-final-qa-report.md";
         filters = { Markdown: ["md"] };
-      } else if (format.startsWith("CSV")) {
-        content = toCsvReport(vulns);
-        defaultName = "secuguard-security-qa-report.csv";
-        filters = { "CSV (spreadsheet)": ["csv"] };
-      } else if (format.startsWith("SARIF")) {
-        content = JSON.stringify(toSarif(vulns, "0.1.0"), null, 2);
-        defaultName = "secuguard-report.sarif";
-        filters = { SARIF: ["sarif"] };
       } else {
-        content = JSON.stringify(vulns, null, 2);
-        defaultName = "secuguard-report.json";
-        filters = { JSON: ["json"] };
+        content = toFinalQaHtmlReport(data, meta);
+        defaultName = "secuguard-final-qa-report.html";
+        filters = { "HTML report": ["html"] };
       }
-      // Default to the active editor's folder so exports land where the user is working.
-      const defaultDir = vscode.window.activeTextEditor
-        ? path.dirname(vscode.window.activeTextEditor.document.uri.fsPath)
-        : w.workspaceRoot;
       const uri = await vscode.window.showSaveDialog({
         defaultUri: vscode.Uri.file(path.join(defaultDir, defaultName)),
         filters,
-        saveLabel: "Save SecuGuard report",
+        saveLabel: "Save SecuGuard final QA report",
       });
-      if (!uri) return;
+      if (!uri) continue;
       fs.writeFileSync(uri.fsPath, content, "utf8");
-      const exportIdentity = await resolveIdentity(w.context, w.workspaceRoot);
-      w.db.addAuditEntry("export", `Exported ${format} report to ${uri.fsPath}`, exportIdentity.username);
-      vscode.window.showInformationMessage(`SecuGuard report saved to ${uri.fsPath}`);
+      w.db.addAuditEntry("final_report", `Exported final QA report (${fmt}) to ${uri.fsPath}`, identity.username);
+      vscode.window.showInformationMessage(`SecuGuard final QA report saved to ${uri.fsPath}`);
+    }
+  };
+
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.generateFinalReport", async () => {
+      const includeAi = await vscode.window.showQuickPick(
+        ["No — deterministic report only", "Yes — include an AI executive summary"],
+        { placeHolder: "Include an AI-written executive summary in the report?" }
+      );
+      if (!includeAi) return;
+      const formats = await vscode.window.showQuickPick(
+        ["Both (Markdown + HTML)", "Markdown (.md)", "HTML (.html)"],
+        { placeHolder: "Export format" }
+      );
+      if (!formats) return;
+      await generateAndSaveFinalReport({
+        formats: formats.startsWith("Both") ? ["markdown", "html"] : formats.startsWith("Markdown") ? ["markdown"] : ["html"],
+        includeAi: includeAi.startsWith("Yes"),
+      });
     })
   );
 
@@ -383,6 +800,12 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           case "explain":
             vscode.commands.executeCommand("secuguard.explainVulnerability", msg.id);
             break;
+          case "refreshAi":
+            vscode.commands.executeCommand("secuguard.refreshAiAnalysis", msg.id);
+            break;
+          case "generateTest":
+            vscode.commands.executeCommand("secuguard.generateTest", msg.id);
+            break;
           case "setStatus": {
             const v = w.db.get(msg.id);
             if (v && typeof msg.status === "string") {
@@ -398,6 +821,20 @@ export function registerCommands(w: Wiring): vscode.Disposable[] {
           }
           case "export":
             vscode.commands.executeCommand("secuguard.exportReport");
+            break;
+          case "exportRaw":
+            if (["markdown", "csv", "sarif", "json"].includes(msg.format)) await saveRawExport(w, msg.format);
+            break;
+          case "generateAllTests":
+            vscode.commands.executeCommand("secuguard.generateAllTests");
+            break;
+          case "generateFinalReport":
+            if (Array.isArray(msg.formats) && msg.formats.length > 0) {
+              await generateAndSaveFinalReport({
+                formats: msg.formats.filter((f: string) => f === "markdown" || f === "html"),
+                includeAi: !!msg.includeAi,
+              });
+            }
             break;
           case "rescan":
             vscode.commands.executeCommand("secuguard.scanWorkspace");
@@ -452,8 +889,13 @@ function commentPrefixFor(lang: string): string {
   }
 }
 
-function showExplainPanel(v: Vulnerability) {
-  const panel = vscode.window.createWebviewPanel("secuguardExplain", `Explain & Fix: ${v.title}`, vscode.ViewColumn.Beside, {});
+function showExplainPanel(v: Vulnerability, onRefresh?: (id: string) => void) {
+  const panel = vscode.window.createWebviewPanel("secuguardExplain", `Explain & Fix: ${v.title}`, vscode.ViewColumn.Beside, {
+    enableScripts: true,
+  });
+  panel.webview.onDidReceiveMessage((msg) => {
+    if (msg.type === "refresh" && typeof msg.id === "string") onRefresh?.(msg.id);
+  });
   if (extensionUri) panel.iconPath = vscode.Uri.joinPath(extensionUri, "resources", "shield.svg");
   const esc = (s: string) => String(s || "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]!));
   // Rule remediation as fallback so stale findings still show a fix guide.
@@ -469,8 +911,9 @@ function showExplainPanel(v: Vulnerability) {
     .attack{border-left:3px solid #e93147;padding-left:10px}
     .fix{border-left:3px solid #58a6ff;padding-left:10px}
     .muted{color:var(--vscode-descriptionForeground);font-size:12px}
+    .refresh{font-size:12px;color:var(--vscode-textLink-foreground)}
   </style></head><body>
-    <h2>${esc(v.title)}</h2>
+    <h2>${esc(v.title)} <span class="muted" style="font-size:12px"><a href="#" class="refresh" id="refresh">↻ Refresh AI analysis</a></span></h2>
     <div><span class="tag">${esc(v.severity.toUpperCase())}</span><span class="tag">${esc(v.cwe.join(", "))}</span>${v.owasp ? `<span class="tag">${esc(v.owasp)}</span>` : ""}</div>
     <section class="attack"><h4>Attack — what kind of attack can happen</h4><p>${esc(v.description)}</p>${
       v.aiExploitability ? `<p class="muted"><b>AI exploitability:</b> ${esc(v.aiExploitability)}</p>` : ""
@@ -479,5 +922,6 @@ function showExplainPanel(v: Vulnerability) {
     <section><h4>Location</h4><code>${esc(v.file)}:${v.startLine}</code></section>
     ${v.aiExplanation ? `<section><h4>AI Triage${typeof v.aiConfidence === "number" ? ` (confidence ${(v.aiConfidence * 100).toFixed(0)}%)` : ""}</h4><p>${esc(v.aiExplanation)}</p></section>` : ""}
     <section><h4>Code</h4><pre>${esc(v.codeSnippet)}</pre></section>
+    <script>const vscode = acquireVsCodeApi();document.getElementById('refresh')?.addEventListener('click',(e)=>{e.preventDefault();vscode.postMessage({type:'refresh', id:${JSON.stringify(v.id)}});});</script>
   </body></html>`;
 }

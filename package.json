@@ -1,7 +1,7 @@
 {
   "name": "secuguard",
-  "displayName": "SecuGuard — Security Vulnerability Detector",
-  "description": "Embedded security QA engineer for VS Code: finds vulnerabilities, explains exploitability, tracks remediation.",
+  "displayName": "SecuGuard — Personal QA Engineer",
+  "description": "Embedded security + quality engineer for VS Code: vulnerability scanning, AI triage with Gemini/Groq failover, QA readiness checks, unit-test generation, and final QA reports.",
   "version": "0.1.0",
   "publisher": "your-publisher-name",
   "engines": {
@@ -39,6 +39,24 @@
       {
         "command": "secuguard.explainVulnerability",
         "title": "SecuGuard: Explain & Fix This Vulnerability"
+      },
+      {
+        "command": "secuguard.refreshAiAnalysis",
+        "title": "SecuGuard: Refresh AI Analysis"
+      },
+      {
+        "command": "secuguard.generateTest",
+        "title": "SecuGuard: Generate Test for Finding"
+      },
+      {
+        "command": "secuguard.generateAllTests",
+        "title": "SecuGuard: Generate All Missing Tests",
+        "icon": "$(beaker)"
+      },
+      {
+        "command": "secuguard.generateFinalReport",
+        "title": "SecuGuard: Generate Final QA Report",
+        "icon": "$(report)"
       },
       {
         "command": "secuguard.saveToBacklog",
@@ -86,6 +104,11 @@
         "command": "secuguard.filterBySeverity",
         "title": "SecuGuard: Filter by Severity",
         "icon": "$(filter)"
+      },
+      {
+        "command": "secuguard.qaReadinessCheck",
+        "title": "SecuGuard: QA Readiness Check",
+        "icon": "$(checklist)"
       }
     ],
     "viewsContainers": {
@@ -117,6 +140,11 @@
           "group": "navigation@1"
         },
         {
+          "command": "secuguard.qaReadinessCheck",
+          "when": "view == secuguard.summary || view == secuguard.explorer",
+          "group": "navigation@1"
+        },
+        {
           "command": "secuguard.openDashboard",
           "when": "view == secuguard.explorer",
           "group": "navigation@2"
@@ -137,6 +165,16 @@
           "command": "secuguard.explainVulnerability",
           "when": "view == secuguard.explorer && viewItem == finding",
           "group": "inline@1"
+        },
+        {
+          "command": "secuguard.refreshAiAnalysis",
+          "when": "view == secuguard.explorer && viewItem == finding",
+          "group": "inline@1.5"
+        },
+        {
+          "command": "secuguard.generateTest",
+          "when": "view == secuguard.explorer && viewItem == finding",
+          "group": "inline@1.6"
         },
         {
           "command": "secuguard.saveToBacklog",
@@ -164,6 +202,15 @@
       "commandPalette": [
         {
           "command": "secuguard.scanWorkspace"
+        },
+        {
+          "command": "secuguard.qaReadinessCheck"
+        },
+        {
+          "command": "secuguard.generateAllTests"
+        },
+        {
+          "command": "secuguard.generateFinalReport"
         },
         {
           "command": "secuguard.scanCurrentFile"
@@ -248,6 +295,26 @@
           "default": "gemini-2.5-flash",
           "description": "Model used for AI triage / fix suggestions. Defaults per provider when unset: gemini-2.5-flash (gemini), llama-3.3-70b-versatile (groq), claude-sonnet-4-6 (anthropic)."
         },
+        "secuguard.ai.fallbackProvider": {
+          "type": "string",
+          "enum": [
+            "",
+            "groq",
+            "gemini"
+          ],
+          "default": "",
+          "description": "Provider to retry with once when the primary hits a 429/quota error. When empty, SecuGuard picks gemini→groq / groq→gemini automatically. Not used by anthropic."
+        },
+        "secuguard.ai.maxConcurrentCalls": {
+          "type": "number",
+          "default": 2,
+          "description": "Maximum simultaneous AI API calls (used during batch test generation and parallel triage)."
+        },
+        "secuguard.ai.testGenBatchSize": {
+          "type": "number",
+          "default": 6,
+          "description": "Number of findings per batch during 'Generate All Missing Tests'."
+        },
         "secuguard.attribution.githubUsername": {
           "type": "string",
           "default": "",
@@ -262,6 +329,46 @@
           "type": "boolean",
           "default": true,
           "description": "Mark all findings from the very first scan as pre-existing backlog instead of new alerts."
+        },
+        "secuguard.quality.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the quality scanner (TODO markers, long functions, deep nesting, debug statements)."
+        },
+        "secuguard.quality.maxFunctionLines": {
+          "type": "number",
+          "default": 80,
+          "description": "Functions longer than this many lines are flagged as quality debt."
+        },
+        "secuguard.quality.maxNestingDepth": {
+          "type": "number",
+          "default": 4,
+          "description": "Code nested deeper than this many levels is flagged as quality debt."
+        },
+        "secuguard.testCoverage.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the test-coverage scanner (checks every exported symbol for an associated test file)."
+        },
+        "secuguard.testCoverage.testFileGlobs": {
+          "type": "array",
+          "default": [
+            "**/*.test.*",
+            "**/*.spec.*",
+            "**/test_*.py",
+            "**/__tests__/**"
+          ],
+          "description": "Glob patterns that identify test files used by the coverage scanner."
+        },
+        "secuguard.docs.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable the documentation scanner (flags exported symbols without JSDoc/docstrings)."
+        },
+        "secuguard.readinessCheck.baseBranch": {
+          "type": "string",
+          "default": "main",
+          "description": "Base branch compared against for the QA Readiness Check (`git diff --name-only <base>`)."
         }
       }
     }

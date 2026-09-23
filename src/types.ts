@@ -1,6 +1,8 @@
 export type Severity = "critical" | "high" | "medium" | "low" | "info";
 
-export type FindingCategory = "sast" | "sca" | "secret" | "iac" | "container";
+export type FindingCategory = "sast" | "sca" | "secret" | "iac" | "container" | "quality" | "test-coverage" | "documentation";
+
+export type Effort = "trivial" | "small" | "medium" | "large";
 
 export type VulnStatus =
   | "open"
@@ -42,6 +44,7 @@ export interface Vulnerability {
   aiExplanation?: string;
   aiConfidence?: number; // 0-1
   aiExploitability?: string; // how an attacker can exploit this (AI triage)
+  effort?: Effort; // estimated effort to fix (QA/quality scanners)
   suggestedFix?: string;
   status: VulnStatus;
   firstDetected: string; // ISO timestamp
@@ -71,6 +74,7 @@ export interface RawFinding {
   codeSnippet: string;
   sourceScanner: string;
   remediation?: string;
+  effort?: Effort; // estimated effort to fix (QA/quality scanners)
 }
 
 export interface ScanResult {

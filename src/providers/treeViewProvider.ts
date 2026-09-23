@@ -1,10 +1,13 @@
 import * as vscode from "vscode";
 import * as path from "path";
-import { Vulnerability, Severity, SEVERITY_ORDER, SEVERITY_COLOR } from "../types";
+import { Vulnerability, Severity, SEVERITY_ORDER, SEVERITY_COLOR, FindingCategory } from "../types";
 import { Database } from "../storage/database";
 
-type TreeNode = SeverityGroupNode | FileGroupNode | FindingNode;
+type TreeNode = CategoryGroupNode | SeverityGroupNode | FileGroupNode | FindingNode;
 
+class CategoryGroupNode {
+  constructor(public category: FindingCategory, public count: number) {}
+}
 class SeverityGroupNode {
   constructor(public severity: Severity, public count: number) {}
 }
@@ -48,6 +51,15 @@ export class SecurityExplorerProvider implements vscode.TreeDataProvider<TreeNod
   }
 
   getTreeItem(element: TreeNode): vscode.TreeItem {
+    if (element instanceof CategoryGroupNode) {
+      const item = new vscode.TreeItem(
+        `${element.category.toUpperCase()} (${element.count})`,
+        vscode.TreeItemCollapsibleState.Expanded
+      );
+      item.iconPath = new vscode.ThemeIcon("shield");
+      item.contextValue = "categoryGroup";
+      return item;
+    }
     if (element instanceof SeverityGroupNode) {
       const item = new vscode.TreeItem(
         `${element.severity.toUpperCase()} (${element.count})`,
@@ -97,9 +109,25 @@ export class SecurityExplorerProvider implements vscode.TreeDataProvider<TreeNod
     const vulns = this.activeVulns();
 
     if (!element) {
+      // Group by category at the top level only when several categories have findings;
+      // otherwise keep the familiar Severity → File → Finding hierarchy.
+      const categories = Array.from(new Set(vulns.map((v) => v.category)));
+      if (categories.length > 1) {
+        return categories
+          .sort((a, b) => categoryIndex(a) - categoryIndex(b))
+          .map((cat) => new CategoryGroupNode(cat, vulns.filter((v) => v.category === cat).length));
+      }
+
       const order: Severity[] = ["critical", "high", "medium", "low", "info"];
       return order
         .map((sev) => new SeverityGroupNode(sev, vulns.filter((v) => v.severity === sev).length))
+        .filter((g) => g.count > 0);
+    }
+
+    if (element instanceof CategoryGroupNode) {
+      const order: Severity[] = ["critical", "high", "medium", "low", "info"];
+      return order
+        .map((sev) => new SeverityGroupNode(sev, vulns.filter((v) => v.category === element.category && v.severity === sev).length))
         .filter((g) => g.count > 0);
     }
 
@@ -120,6 +148,12 @@ export class SecurityExplorerProvider implements vscode.TreeDataProvider<TreeNod
 
     return [];
   }
+}
+
+function categoryIndex(cat: FindingCategory): number {
+  const order: FindingCategory[] = ["sast", "sca", "secret", "iac", "container", "quality", "test-coverage", "documentation"];
+  const i = order.indexOf(cat);
+  return i === -1 ? 99 : i;
 }
 
 function sevColorId(sev: Severity): string {
@@ -175,6 +209,20 @@ export class SummaryProvider implements vscode.TreeDataProvider<vscode.TreeItem>
     if (items.length === 0) {
       items.push(new vscode.TreeItem("No findings yet — run a scan"));
     }
+
+    const readiness = new vscode.TreeItem("Run QA Readiness Check", vscode.TreeItemCollapsibleState.None);
+    readiness.iconPath = new vscode.ThemeIcon("checklist");
+    readiness.description = "pre-PR gate";
+    readiness.command = { command: "secuguard.qaReadinessCheck", title: "QA Readiness Check" };
+    readiness.contextValue = "actionItem";
+    items.push(readiness);
+
+    const genTests = new vscode.TreeItem("Generate Missing Tests", vscode.TreeItemCollapsibleState.None);
+    genTests.iconPath = new vscode.ThemeIcon("beaker");
+    genTests.command = { command: "secuguard.generateAllTests", title: "Generate Missing Tests" };
+    genTests.contextValue = "actionItem";
+    items.push(genTests);
+
     return items;
   }
 }
