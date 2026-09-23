@@ -104,6 +104,31 @@
         "command": "secuguard.filterBySeverity",
         "title": "SecuGuard: Filter by Severity",
         "icon": "$(filter)"
+      },
+      {
+        "command": "secuguard.filterToSeverity",
+        "title": "SecuGuard: Filter Explorer to Severity",
+        "icon": "$(filter-filled)"
+      },
+      {
+        "command": "secuguard.clearSeverityFilter",
+        "title": "SecuGuard: Clear Severity Filter",
+        "icon": "$(close)"
+      },
+      {
+        "command": "secuguard.groupBy",
+        "title": "SecuGuard: Change Explorer Grouping",
+        "icon": "$(list-selection)"
+      },
+      {
+        "command": "secuguard.rescanFile",
+        "title": "SecuGuard: Rescan This File",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "secuguard.copyFindings",
+        "title": "SecuGuard: Copy Findings as Markdown",
+        "icon": "$(clippy)"
       }
     ],
     "viewsContainers": {
@@ -127,6 +152,12 @@
         }
       ]
     },
+    "viewsWelcome": [
+      {
+        "view": "secuguard.explorer",
+        "contents": "$(shield) **SecuGuard hasn't scanned this workspace yet.**\n\nIt checks code, dependencies, secrets and IaC for security problems — plus quality debt, missing tests and missing docs. Everything runs locally: findings are written to `.secuguard/` and never uploaded.\n\n[$(rocket) Run first scan](command:secuguard.scanWorkspace)\n[$(dashboard) Open dashboard](command:secuguard.openDashboard)\n[$(gear) Settings](command:workbench.action.openSettings?%22secuguard%22)\n\nOnce a scan finishes, findings appear here grouped by category — with AI explanations, one-click test generation and a QA health score."
+      }
+    ],
     "menus": {
       "view/title": [
         {

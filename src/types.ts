@@ -91,6 +91,33 @@ export interface ScannerAdapter {
   scan(targetPaths: string[], workspaceRoot: string): Promise<ScanResult>;
 }
 
+export type ScanStageStatus = "pending" | "running" | "done" | "skipped";
+
+/** One scanner row in the live scanner checklist shown in the sidebar/dashboard. */
+export interface ScanStageState {
+  name: string;
+  status: ScanStageStatus;
+}
+
+/**
+ * Live state of an in-flight (or just-finished) scan. A single shape is shared by
+ * the sidebar tree, the status bar and the dashboard so every surface animates in sync.
+ */
+export interface ScanProgressState {
+  active: boolean;
+  /** Human label, e.g. "Scanning workspace". */
+  label: string;
+  /** 1-based index of the scanner currently running. */
+  index: number;
+  total: number;
+  filesScanned: number;
+  startedAt: number;
+  stages: ScanStageState[];
+  /** Set when the user stopped the scan; nothing is written to disk in that case. */
+  cancelled?: boolean;
+  firstScan?: boolean;
+}
+
 export const SEVERITY_ORDER: Record<Severity, number> = {
   critical: 5,
   high: 4,
