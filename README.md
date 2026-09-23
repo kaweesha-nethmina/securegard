@@ -52,8 +52,13 @@ Press **F5** in VS Code (with this folder open) to launch an Extension Developme
 
 ## The QA workflow
 
-### 1. Scan → tabbed dashboard
-**SecuGuard: Open Dashboard** now has tabs: **Overview** (KPI cards across all categories, QA Health Score, severity donut, category bars, 14-day trend, quick actions), **Security**, **Quality** (filterable by TODO / oversized / nesting / debug chips), **Test Coverage** (with *x of y exported symbols tested* summary + one-click generation), **Documentation**, and **Reports**. Tab selection persists (`setState`), and a global search filters the active tab.
+### 1. Scan → interactive dashboard
+**SecuGuard: Open Dashboard** renders a single live webview shell: refreshing findings pushes a `data` message and the page swaps only the dynamic regions, so your tab, search, sort, filters, expanded rows and scroll position all survive a rescan or a status change.
+
+- **Tabs** — **Overview** (clickable KPI cards, QA Health Score ring, severity donut, category bars, 14-day trend, quick actions), **Security**, **Quality**, **Test Coverage**, **Documentation**, **Reports**.
+- **Interactions** — sort any column; click a row (or its chevron) to expand an inline detail panel with description, facts, AI insight + exploitability, line-numbered code, suggested fix and the full status timeline; click KPI cards, donut slices/legend or category bars to jump to a tab pre-filtered; multi-select severity chips; quality-debt sub-chips; live *x of y shown* counter; compact/comfortable density toggle; toasts; copy a finding, the filtered list or a QA snapshot as Markdown.
+- **Keyboard** — `/` search, `Esc` clear, `1`–`6` tabs, `Enter` expand the focused finding, `d` density, `r` rescan, `?` shortcut help.
+- The webview runs under a strict `Content-Security-Policy` with a per-panel script nonce; state persists via `setState`.
 
 **QA Health Score** (0–100, tooltip explains the formula): starts at 100; −10 critical, −6 high, −3 medium, −1 low, −0.5 info; −3 oversized functions; −1 deep nesting/debug; −0.5 missing tests; −0.25 missing docs; clamped at 0.
 
