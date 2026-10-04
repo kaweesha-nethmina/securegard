@@ -2,7 +2,7 @@
   "name": "secuguard",
   "displayName": "SecuGuard",
   "description": "Local-first security and QA scanning for VS Code with optional AI triage and report exports.",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "publisher": "KaweeshaNethmina",
   "license": "MIT",
   "repository": {
@@ -111,6 +111,11 @@
         "title": "SecuGuard: Clear Baseline / Reset"
       },
       {
+        "command": "secuguard.resetFindings",
+        "title": "SecuGuard: Reset Findings & Remove Tags from Code",
+        "icon": "$(trash)"
+      },
+      {
         "command": "secuguard.filterBySeverity",
         "title": "SecuGuard: Filter by Severity",
         "icon": "$(filter)"
@@ -189,6 +194,11 @@
           "command": "secuguard.refreshTree",
           "when": "view == secuguard.explorer",
           "group": "navigation@4"
+        },
+        {
+          "command": "secuguard.resetFindings",
+          "when": "view == secuguard.explorer",
+          "group": "navigation@5"
         }
       ],
       "view/item/context": [
@@ -255,8 +265,14 @@
         {
           "command": "secuguard.setGithubUsername"
         },
+{
+        "command": "secuguard.reloadFromDisk"
+      },
         {
-          "command": "secuguard.reloadFromDisk"
+          "command": "secuguard.resetFindings"
+        },
+        {
+          "command": "secuguard.clearBaseline"
         }
       ]
     },

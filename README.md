@@ -48,6 +48,23 @@ SecuGuard is a local-first security and QA assistant for VS Code. Scan a whole w
 | SecuGuard: Set GitHub Username | Set the identity used in status history. |
 | SecuGuard: Refresh | Refresh the Security Explorer. |
 | SecuGuard: Clear Baseline / Reset | Clear local findings and history. |
+| SecuGuard: Reset Findings & Remove Tags from Code | Delete every finding and optionally strip the `TODO(security)` comments SecuGuard inserted into your source files. |
+
+## How findings close themselves
+
+A full **Scan Workspace** reconciles the database against what the scanners can still
+reproduce. Anything that no longer appears is closed as `fixed` with a
+`secuguard (auto)` entry in its status history — you never have to mark it by hand.
+
+Two rules keep this from over-closing:
+
+- Only `open`, `triaged` and `todo` findings are closed automatically. Your own
+  `fixed`, `false positive` and `won't fix` decisions are never overwritten.
+- Partial scans (Scan Current File, Rescan This File, scan-on-save) never close
+  anything, and a finding is only closed when a scanner that reported it actually
+  ran. If Semgrep is missing, its silence is not treated as a clean bill of health.
+
+If a closed finding reappears, it is reopened automatically as a regression.
 
 ## Settings
 

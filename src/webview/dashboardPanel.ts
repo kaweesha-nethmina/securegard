@@ -854,6 +854,26 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
   .ghost-btn { background: transparent; color: var(--muted); padding: 6px 10px; }
   .ghost-btn:hover { color: var(--fg); }
   .ghost-btn[hidden] { display: none; }
+  .btn.danger {
+    border-color: color-mix(in srgb, var(--bad) 55%, var(--border));
+    color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 10%, var(--card));
+  }
+  .btn.danger:hover {
+    border-color: var(--bad);
+    background: color-mix(in srgb, var(--bad) 18%, var(--card));
+  }
+  .card.danger-zone { border-color: color-mix(in srgb, var(--bad) 35%, var(--border)); }
+  .card.danger-zone::before {
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--bad) 45%, transparent), transparent);
+  }
+  .card.danger-zone p { margin: 0 0 12px; max-width: 720px; }
+  .card.danger-zone code {
+    font-family: var(--mono); font-size: 11.5px;
+    background: var(--card-2); border: 1px solid var(--border-soft);
+    border-radius: 4px; padding: 1px 5px;
+  }
+  .reset-row { margin: 0; }
   /* ---------- sticky chrome ---------- */
   .stick {
     position: sticky; top: 0; z-index: 6; margin: 0 -22px 18px; padding: 0 22px;
@@ -1272,6 +1292,19 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
           <button class="btn" data-action="exportRaw" data-format="csv">CSV spreadsheet (.csv)</button>
           <button class="btn" data-action="exportRaw" data-format="sarif">SARIF (.sarif)</button>
           <button class="btn" data-action="exportRaw" data-format="json">JSON (.json)</button>
+        </div>
+      </div>
+      <hr class="divider" />
+      <div class="card danger-zone">
+        <h3>Danger zone <span class="hint">destructive — cannot be undone</span></h3>
+        <p class="muted">
+          Deletes every stored finding from <code>.secuguard/</code> and can also strip the
+          <code>TODO(security)</code> comments SecuGuard inserted into your source files.
+          Only your own code comments are touched — nothing else is modified.
+        </p>
+        <div class="actions-row reset-row">
+          <button class="btn danger tip" data-action="resetFindings"
+            data-tooltip="Delete all findings and remove SecuGuard TODO tags from your code">🗑 Reset findings &amp; remove tags</button>
         </div>
       </div>
     </section>
@@ -1720,6 +1753,9 @@ function renderShell(webview: vscode.Webview, nonce: string): string {
       case "rescan":
         vscode.postMessage({ type: "rescan" });
         toast("Scanning the workspace…");
+        break;
+      case "resetFindings":
+        vscode.postMessage({ type: "resetFindings" });
         break;
       case "generateAllTests":
         vscode.postMessage({ type: "generateAllTests" });

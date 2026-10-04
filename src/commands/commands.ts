@@ -207,21 +207,40 @@ async function runScan(w: Wiring, targets: string[], label: string) {
     { location: vscode.ProgressLocation.Notification, title: `SecuGuard: ${label}`, cancellable: false },
     async (progress) => {
       progress.report({ message: "Running scanners…" });
-      const { vulnerabilities, stats } = await w.orchestrator.runScan(targets);
+      const { vulnerabilities, stats, autoFixed } = await w.orchestrator.runScan(targets);
       w.outputChannel.appendLine(
         `[${new Date().toISOString()}] Scan complete — ${stats.filesScanned} files, ${stats.durationMs}ms, scanners: ${stats.scannersRun.join(", ")}, findings: ${vulnerabilities.length}`
       );
+      if (autoFixed.length) {
+        w.outputChannel.appendLine(
+          `[${new Date().toISOString()}] Auto-closed ${autoFixed.length} finding(s) no longer reproducible: ${autoFixed
+            .slice(0, 20)
+            .map((v) => `${v.id.slice(0, 8)} (${v.ruleId} ${v.file}:${v.startLine})`)
+            .join(", ")}${autoFixed.length > 20 ? ", …" : ""}`
+        );
+      }
       const identity = await resolveIdentity(w.context, w.workspaceRoot);
       w.db.addAuditEntry("scan", `${label}: ${stats.filesScanned} files scanned via [${stats.scannersRun.join(", ")}], ${vulnerabilities.length} findings`, identity.username);
+      if (autoFixed.length) {
+        w.db.addAuditEntry(
+          "auto_fix",
+          `${label}: closed ${autoFixed.length} finding(s) no longer detected — ${autoFixed
+            .map((v) => `${v.ruleId} at ${v.file}:${v.startLine}`)
+            .join(", ")}`,
+          "secuguard (auto)"
+        );
+      }
       refreshAll(w, stats);
 
       const newCritical = vulnerabilities.filter((v) => v.severity === "critical" && v.status === "open").length;
       const openSettings = "Open settings";
       const openDashboard = "Open dashboard";
+      const autoFixedNote =
+        autoFixed.length > 0 ? ` ${autoFixed.length} fixed automatically since the last scan.` : "";
       const message =
         newCritical > 0
-          ? `SecuGuard found ${newCritical} CRITICAL issue(s). Open the Security Explorer to review.`
-          : `SecuGuard scan complete: ${vulnerabilities.length} active finding(s).`;
+          ? `SecuGuard found ${newCritical} CRITICAL issue(s). Open the Security Explorer to review.${autoFixedNote}`
+          : `SecuGuard scan complete: ${vulnerabilities.length} active finding(s).${autoFixedNote}`;
       // Post-scan notification doubles as a shortcut into settings, so a scan
       // never leaves the user without a way to reach configuration.
       vscode.window
@@ -892,6 +911,11 @@ Checklist passing: ${data.checklist.filter((c) => c.ok).length}/${data.checklist
           case "openSettings":
             openSecuGuardSettings();
             break;
+          case "resetFindings":
+            // Re-enter through the command so the dashboard button and the
+            // palette entry share one confirmation flow.
+            vscode.commands.executeCommand("secuguard.resetFindings");
+            break;
         }
       });
     })
@@ -908,6 +932,83 @@ Checklist passing: ${data.checklist.filter((c) => c.ok).length}/${data.checklist
       w.db.resetAll();
       refreshAll(w);
       vscode.window.showInformationMessage("SecuGuard: local vulnerability database cleared.");
+    })
+  );
+
+  /**
+   * Full reset: wipes the findings database and optionally strips the
+   * `TODO(security): […]` comments SecuGuard injected into source files.
+   * Offered as its own command (rather than folded into clearBaseline) because
+   * editing the user's source is destructive and deserves its own confirmation.
+   */
+  disposables.push(
+    vscode.commands.registerCommand("secuguard.resetFindings", async () => {
+      const total = w.db.getAll().length;
+      const preview = stripSecuGuardTags(w.workspaceRoot, true);
+
+      const scope = await vscode.window.showQuickPick(
+        [
+          {
+            label: "$(trash) Reset findings and remove SecuGuard tags from code",
+            description: `${total} finding(s) deleted · ${preview.tagsRemoved} tag(s) in ${preview.filesChanged} file(s) removed`,
+            detail: "Recommended. Clears .secuguard/ and deletes every TODO(security) comment SecuGuard inserted.",
+            value: "all" as const,
+          },
+          {
+            label: "$(database) Reset findings only",
+            description: `${total} finding(s) deleted`,
+            detail: "Leaves TODO(security) comments in your source files untouched.",
+            value: "findings" as const,
+          },
+          {
+            label: "$(close) Cancel",
+            detail: "Nothing is changed.",
+            value: "cancel" as const,
+          },
+        ],
+        { placeHolder: "SecuGuard: choose what to reset", ignoreFocusOut: true }
+      );
+      if (!scope || scope.value === "cancel") return;
+
+      // Second, explicit modal gate — this deletes data and rewrites source.
+      const confirmed = await vscode.window.showWarningMessage(
+        scope.value === "all"
+          ? `Delete all ${total} SecuGuard finding(s) and remove ${preview.tagsRemoved} SecuGuard tag(s) from ${preview.filesChanged} source file(s)? This cannot be undone.`
+          : `Delete all ${total} SecuGuard finding(s)? This cannot be undone.`,
+        { modal: true, detail: "Your source files are only modified for SecuGuard TODO tags — no other code is touched." },
+        "Reset"
+      );
+      if (confirmed !== "Reset") return;
+
+      const stripTags = scope.value === "all";
+
+      let tagsRemoved = 0;
+      let filesChanged = 0;
+      if (stripTags) {
+        const result = await vscode.window.withProgress(
+          { location: vscode.ProgressLocation.Notification, title: "SecuGuard: removing tags from source…", cancellable: false },
+          async () => stripSecuGuardTags(w.workspaceRoot, false)
+        );
+        tagsRemoved = result.tagsRemoved;
+        filesChanged = result.filesChanged;
+        if (result.errors.length) {
+          w.outputChannel.appendLine(`[reset] failed to edit ${result.errors.length} file(s):`);
+          for (const e of result.errors) w.outputChannel.appendLine(`  ${e}`);
+        }
+      }
+
+      w.db.resetAll();
+      refreshAll(w);
+
+      const identity = await resolveIdentity(w.context, w.workspaceRoot);
+      w.db.addAuditEntry(
+        "reset",
+        `Reset ${total} finding(s)${stripTags ? ` and stripped ${tagsRemoved} TODO tag(s) from ${filesChanged} file(s)` : " (source files left untouched)"}`,
+        identity.username
+      );
+
+      const tagNote = stripTags ? ` and removed ${tagsRemoved} tag(s) from ${filesChanged} file(s)` : "";
+      vscode.window.showInformationMessage(`SecuGuard: reset complete — ${total} finding(s) deleted${tagNote}.`);
     })
   );
 
@@ -940,6 +1041,122 @@ function commentPrefixFor(lang: string): string {
     default:
       return "//";
   }
+}
+
+// ---- SecuGuard TODO tag stripping (used by "Reset Findings") ------------------
+
+/**
+ * A SecuGuard tag is a whole line carrying both halves of the marker written by
+ * `secuguard.addTodo`:
+ *   `// TODO(security): [A1B2C3D4] Title - CWE-79 - see SecuGuard dashboard`
+ * Requiring both halves keeps hand-written `TODO(security)` notes from being
+ * deleted, and the trailing marker means a user's own prose can't match by accident.
+ */
+const SG_TAG_MARKER = "TODO(security):";
+const SG_TAG_SUFFIX = "see SecuGuard dashboard";
+
+/** Directories never worth walking for injected comments. */
+const SKIP_DIRS = new Set([
+  "node_modules", ".git", ".secuguard", "dist", "build", "out", "coverage",
+  ".next", ".nuxt", ".turbo", "vendor", "__pycache__", ".venv", "venv",
+  "target", ".tox", ".mypy_cache", ".pytest_cache", ".gradle", ".idea",
+]);
+
+/** Source/markup extensions `addTodo` can target (see commentPrefixFor). */
+const CODE_EXTENSIONS = new Set([
+  ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py", ".rb", ".go", ".rs",
+  ".java", ".kt", ".kts", ".swift", ".c", ".h", ".cpp", ".hpp", ".cc", ".cs",
+  ".php", ".scala", ".sh", ".bash", ".zsh", ".html", ".htm", ".vue", ".svelte",
+  ".dart", ".ex", ".exs", ".pl", ".lua", ".sql", ".groovy", ".gradle", ".tf",
+]);
+
+const MAX_TAG_FILE_BYTES = 2 * 1024 * 1024;
+
+export interface TagStripResult {
+  filesScanned: number;
+  filesChanged: number;
+  tagsRemoved: number;
+  errors: string[];
+}
+
+function isSecuGuardTagLine(line: string): boolean {
+  return line.includes(SG_TAG_MARKER) && line.includes(SG_TAG_SUFFIX);
+}
+
+/**
+ * Walks the workspace and removes every SecuGuard TODO tag line.
+ * `dryRun` reports what would change without touching a single file.
+ *
+ * Line endings and the trailing-newline state are preserved: only the matched
+ * lines disappear, nothing else in the file is reflowed or re-indented.
+ */
+export function stripSecuGuardTags(workspaceRoot: string, dryRun = false): TagStripResult {
+  const result: TagStripResult = { filesScanned: 0, filesChanged: 0, tagsRemoved: 0, errors: [] };
+
+  const walk = (dir: string): void => {
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(dir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const abs = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (SKIP_DIRS.has(entry.name)) continue;
+        walk(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+      if (!CODE_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
+
+      let stat: fs.Stats;
+      try {
+        stat = fs.statSync(abs);
+      } catch {
+        continue;
+      }
+      if (stat.size === 0 || stat.size > MAX_TAG_FILE_BYTES) continue;
+
+      let content: string;
+      try {
+        content = fs.readFileSync(abs, "utf8");
+      } catch {
+        continue;
+      }
+      result.filesScanned++;
+
+      const eol = content.includes("\r\n") ? "\r\n" : "\n";
+      const hadTrailingEol = content.endsWith("\n");
+      const lines = content.split(/\r?\n/);
+      if (hadTrailingEol) lines.pop(); // split() leaves a final "" for it
+
+      const kept = lines.filter((line) => !isSecuGuardTagLine(line));
+      const removed = lines.length - kept.length;
+      if (removed === 0) continue;
+
+      result.filesChanged++;
+      result.tagsRemoved += removed;
+      if (dryRun) continue;
+
+      const rebuilt = kept.join(eol) + (hadTrailingEol ? eol : "");
+      try {
+        if (fs.readFileSync(abs, "utf8") === rebuilt) {
+          result.filesChanged--;
+          result.tagsRemoved -= removed;
+          continue;
+        }
+        fs.writeFileSync(abs, rebuilt, "utf8");
+      } catch (e: any) {
+        result.filesChanged--;
+        result.tagsRemoved -= removed;
+        result.errors.push(`${path.relative(workspaceRoot, abs)}: ${e?.message ?? e}`);
+      }
+    }
+  };
+
+  walk(workspaceRoot);
+  return result;
 }
 
 function showExplainPanel(v: Vulnerability, onRefresh?: (id: string) => void) {

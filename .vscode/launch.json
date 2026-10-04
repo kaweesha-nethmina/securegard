@@ -8,8 +8,7 @@
       "runtimeExecutable": "${execPath}",
       "args": ["--extensionDevelopmentPath=${workspaceFolder}"],
       "outFiles": ["${workspaceFolder}/dist/**/*.js"],
-      "preLaunchTask": "npm: build",
-      "envFile": "${workspaceFolder}/.env"
+      "preLaunchTask": "npm: build"
     }
   ]
 }
