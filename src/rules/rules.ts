@@ -13,6 +13,14 @@ export interface Rule {
   remediation: string;
   /** Optional: if provided, a match is only flagged when this negative-lookaround style check does NOT also match the same line (reduces obvious false positives) */
   excludeIfMatches?: RegExp;
+  /**
+   * Set when the AST engine (`src/rules/*.ts`) now owns this CWE for JS/TS.
+   * The rule definition is kept — description, remediation and the multi-language
+   * coverage that has no AST engine yet still rely on it — but the legacy
+   * line-regex path skips it so the two engines cannot double-report and the
+   * noisy regex cannot outvote the proven sink+taint result.
+   */
+  supersededForJsTsBy?: string;
 }
 
 const JS_TS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
@@ -40,6 +48,7 @@ export const RULES: Rule[] = [
       /(SELECT|INSERT|UPDATE|DELETE|DROP)\s[^;'"]*(\+|\$\{|%s|f["'])[^;]*(FROM|INTO|WHERE|VALUES)?/i,
     remediation:
       "Use parameterized queries / prepared statements (e.g. `db.query('... WHERE id = ?', [id])`) or an ORM's safe query builder instead of concatenating input into SQL text.",
+    supersededForJsTsBy: "sg-sql-injection-ast",
   },
   {
     id: "sg-command-injection",
@@ -55,6 +64,7 @@ export const RULES: Rule[] = [
       /(child_process\.exec\(|exec\(|execSync\(|os\.system\(|subprocess\.(call|run|Popen)\(.*shell\s*=\s*True|Runtime\.getRuntime\(\)\.exec\(|popen\(|shell_exec\(|\`.*\$\{.*\}.*\`)/,
     remediation:
       "Avoid shell interpreters entirely: use the argv-array form of process spawning (e.g. `execFile`/`spawn` with an args array, or `subprocess.run([...], shell=False)`), and allow-list input.",
+    supersededForJsTsBy: "sg-command-injection-ast",
   },
   {
     id: "sg-nosql-injection",
@@ -149,9 +159,11 @@ export const RULES: Rule[] = [
     languages: ANY,
     pattern: /\b(DES|RC4|Cipher\.getInstance\(\s*["']DES)/,
     remediation: "Use AES-256-GCM (or another modern AEAD cipher) instead.",
+    supersededForJsTsBy: "sg-weak-cipher-ast",
   },
   {
     id: "sg-insecure-random",
+    supersededForJsTsBy: "sg-insecure-random-context",
     title: "Insecure randomness used in a security-sensitive context",
     description:
       "`Math.random()` (or `random`/`rand`) is not cryptographically secure and is predictable. Using it for tokens, passwords, or keys allows attackers to guess values (CWE-338).",
@@ -179,6 +191,7 @@ export const RULES: Rule[] = [
       /\b(api[_-]?key|apikey|secret|password|passwd|pwd|token|access[_-]?key)\s*[:=]\s*["'`][A-Za-z0-9_\-\/+=]{8,}["'`]/i,
     excludeIfMatches: /(process\.env|os\.environ|getenv|System\.getenv|ENV\[|<%=|\{\{|import\.meta\.env|example|placeholder|xxx|changeme|your[_-]?)/i,
     remediation: "Move the secret to an environment variable or a secrets manager (Vault, AWS Secrets Manager, etc.) and rotate the exposed credential immediately.",
+    supersededForJsTsBy: "sg-hardcoded-secret",
   },
   {
     id: "sg-aws-access-key",
@@ -386,6 +399,7 @@ export const RULES: Rule[] = [
     languages: ANY,
     pattern: /\(([^()]*[+*]){1,}[^()]*\)[+*]/,
     remediation: "Rewrite the pattern to avoid nested/overlapping quantifiers, or validate input length before matching, or use a linear-time regex engine.",
+    supersededForJsTsBy: "sg-redos",
   },
 ];
 

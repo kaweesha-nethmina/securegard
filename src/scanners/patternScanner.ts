@@ -2,6 +2,10 @@ import * as fs from "fs";
 import * as path from "path";
 import { RawFinding, ScanResult, ScannerAdapter } from "../types";
 import { rulesForLanguage, extOf } from "../rules/rules";
+import { ExcludeMatcher, collectAnalysableFiles, readIgnoreFile, checkFileEligibility } from "./eligibility";
+
+/** Languages the AST engine currently parses. */
+const AST_LANGUAGES = new Set(["js", "jsx", "ts", "tsx", "mjs", "cjs"]);
 
 const MAX_FILE_BYTES = 2 * 1024 * 1024; // skip files over 2MB (likely generated/binary)
 const CONTEXT_LINES = 2;
@@ -25,7 +29,9 @@ function isLikelyBinary(buf: Buffer): boolean {
 
 function scanFile(filePath: string, workspaceRoot: string): RawFinding[] {
   const ext = extOf(filePath);
-  const rules = rulesForLanguage(ext);
+  // A rule the AST engine has replaced is skipped here: running both engines
+  // would double-report, and the regex cannot prove a sink or a taint path.
+  const rules = rulesForLanguage(ext).filter((r) => !(r.supersededForJsTsBy && AST_LANGUAGES.has(ext)));
   if (rules.length === 0) return [];
 
   let buf: Buffer;
@@ -72,32 +78,6 @@ function scanFile(filePath: string, workspaceRoot: string): RawFinding[] {
   return findings;
 }
 
-function walk(dir: string, excludeGlobs: string[], out: string[]): void {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    if (shouldExclude(full, excludeGlobs)) continue;
-    if (entry.isDirectory()) {
-      walk(full, excludeGlobs, out);
-    } else if (entry.isFile()) {
-      out.push(full);
-    }
-  }
-}
-
-function shouldExclude(fullPath: string, globs: string[]): boolean {
-  const normalized = fullPath.split(path.sep).join("/");
-  if (normalized.includes("/.secuguard/")) return true; // never scan SecuGuard's own data dir
-  return globs.some((g) => {
-    const core = g.replace(/^\*\*\//, "").replace(/\/\*\*$/, "").replace(/\*/g, "");
-    return core.length > 0 && normalized.includes(core);
-  });
-}
 
 export class PatternScanner implements ScannerAdapter {
   name = "secuguard-pattern-engine";
@@ -110,14 +90,27 @@ export class PatternScanner implements ScannerAdapter {
 
   async scan(targetPaths: string[], workspaceRoot: string): Promise<ScanResult> {
     const start = Date.now();
+    // Same gate as every other scanner: markdown, lockfiles and bundles must not
+    // reach a regex that was written for executable code.
+    const matcher = new ExcludeMatcher({
+      excludeGlobs: this.excludeGlobs,
+      ignoreFilePaths: readIgnoreFile(workspaceRoot),
+    });
     const files: string[] = [];
     for (const p of targetPaths) {
       const stat = fs.existsSync(p) ? fs.statSync(p) : null;
       if (!stat) continue;
       if (stat.isDirectory()) {
-        walk(p, this.excludeGlobs, files);
-      } else if (!p.split(path.sep).join("/").includes("/.secuguard/")) {
-        files.push(p);
+        for (const f of collectAnalysableFiles(p, workspaceRoot, matcher)) files.push(f);
+      } else {
+        const rel = path.relative(workspaceRoot, p).split(path.sep).join("/");
+        let content = "";
+        try {
+          content = fs.readFileSync(p, "utf8");
+        } catch {
+          /* ignore */
+        }
+        if (checkFileEligibility(p, rel, content, matcher).eligible) files.push(p);
       }
     }
 

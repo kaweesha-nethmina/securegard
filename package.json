@@ -2,7 +2,7 @@
   "name": "secuguard",
   "displayName": "SecuGuard",
   "description": "Local-first security and QA scanning for VS Code with optional AI triage and report exports.",
-  "version": "0.1.1",
+  "version": "0.2.1",
   "publisher": "KaweeshaNethmina",
   "license": "MIT",
   "repository": {
@@ -265,9 +265,9 @@
         {
           "command": "secuguard.setGithubUsername"
         },
-{
-        "command": "secuguard.reloadFromDisk"
-      },
+        {
+          "command": "secuguard.reloadFromDisk"
+        },
         {
           "command": "secuguard.resetFindings"
         },
@@ -415,6 +415,29 @@
           "type": "boolean",
           "default": true,
           "description": "Enable the documentation scanner (flags exported symbols without JSDoc/docstrings)."
+        },
+        "secuguard.security.mode": {
+          "type": "string",
+          "enum": ["strict", "balanced", "paranoid"],
+          "default": "balanced",
+          "enumDescriptions": [
+            "Only findings with proven sinks and no sanitizer (confidence >= 0.85).",
+            "Findings with a proven sink and an unsanitized source (confidence >= 0.7).",
+            "Everything the engine can prove, including low-confidence inference (confidence >= 0.9 with inference allowed)."
+          ],
+          "description": "Sensitivity of the AST security engine. Higher modes report more and risk more false positives."
+        },
+        "secuguard.security.minConfidence": {
+          "type": "number",
+          "default": 0.7,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Drop findings below this confidence. The effective floor is the higher of this value and the mode's floor."
+        },
+        "secuguard.security.excludeTests": {
+          "type": "boolean",
+          "default": true,
+          "description": "Downgrade (not remove) findings in tests, fixtures, seeds and migrations."
         }
       }
     }
@@ -424,13 +447,19 @@
     "build": "esbuild ./src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node --sourcemap",
     "watch": "npm run build -- --watch",
     "compile-check": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "package": "vsce package"
   },
   "devDependencies": {
+    "@babel/parser": "^8.0.6",
+    "@babel/traverse": "^8.0.6",
+    "@babel/types": "^8.0.6",
     "@types/node": "^20.11.0",
     "@types/vscode": "^1.85.0",
     "@vscode/vsce": "^4.0.0",
     "esbuild": "^0.28.2",
-    "typescript": "^5.4.0"
+    "typescript": "^5.4.0",
+    "vitest": "^2.1.9"
   }
 }

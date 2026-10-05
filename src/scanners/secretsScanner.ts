@@ -2,6 +2,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { RawFinding, ScanResult, ScannerAdapter } from "../types";
 import { extOf } from "../rules/rules";
+import { ExcludeMatcher, collectAnalysableFiles, readIgnoreFile, checkFileEligibility } from "./eligibility";
 
 const SKIP_EXT = new Set(["png", "jpg", "jpeg", "gif", "ico", "svg", "woff", "woff2", "ttf", "eot", "lock", "map"]);
 const ASSIGNMENT_RE = /\b([A-Za-z_][A-Za-z0-9_]{2,40})\s*[:=]\s*["'`]([A-Za-z0-9+/_\-=.]{20,120})["'`]/g;
@@ -77,24 +78,6 @@ function scanFile(filePath: string, workspaceRoot: string): RawFinding[] {
   return findings;
 }
 
-function walk(dir: string, excludeGlobs: string[], out: string[]): void {
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(dir, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    const full = path.join(dir, entry.name);
-    const normalized = full.split(path.sep).join("/");
-    if (normalized.includes("/.secuguard/")) continue; // never scan SecuGuard's own data dir
-    if (excludeGlobs.some((g) => normalized.includes(g.replace(/^\*\*\//, "").replace(/\/\*\*$/, "").replace(/\*/g, "")))) {
-      continue;
-    }
-    if (entry.isDirectory()) walk(full, excludeGlobs, out);
-    else if (entry.isFile()) out.push(full);
-  }
-}
 
 export class SecretsScanner implements ScannerAdapter {
   name = "secuguard-entropy-scanner";
@@ -106,12 +89,28 @@ export class SecretsScanner implements ScannerAdapter {
 
   async scan(targetPaths: string[], workspaceRoot: string): Promise<ScanResult> {
     const start = Date.now();
+    // Documentation, lockfiles and generated output used to reach this scanner,
+    // which is why prose scored 4.3 bits/char and was reported as a secret.
+    const matcher = new ExcludeMatcher({
+      excludeGlobs: this.excludeGlobs,
+      ignoreFilePaths: readIgnoreFile(workspaceRoot),
+    });
     const files: string[] = [];
     for (const p of targetPaths) {
       if (!fs.existsSync(p)) continue;
       const stat = fs.statSync(p);
-      if (stat.isDirectory()) walk(p, this.excludeGlobs, files);
-      else if (!p.split(path.sep).join("/").includes("/.secuguard/")) files.push(p);
+      if (stat.isDirectory()) {
+        for (const f of collectAnalysableFiles(p, workspaceRoot, matcher)) files.push(f);
+      } else {
+        const rel = path.relative(workspaceRoot, p).split(path.sep).join("/");
+        let content = "";
+        try {
+          content = fs.readFileSync(p, "utf8");
+        } catch {
+          /* ignore */
+        }
+        if (checkFileEligibility(p, rel, content, matcher).eligible) files.push(p);
+      }
     }
     const findings: RawFinding[] = [];
     for (const f of files) {

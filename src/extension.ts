@@ -3,6 +3,7 @@ import { Database } from "./storage/database";
 import { Orchestrator } from "./engine/orchestrator";
 import { ScannerAdapter } from "./types";
 import { PatternScanner } from "./scanners/patternScanner";
+import { AstSecurityScanner } from "./scanners/astScanner";
 import { SecretsScanner } from "./scanners/secretsScanner";
 import { SemgrepAdapter } from "./scanners/semgrepAdapter";
 import { QualityScanner } from "./scanners/qualityScanner";
@@ -46,7 +47,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   const db = new Database(workspaceRoot, baselineOnFirstRun);
 
+  const securityMode = cfg.get<"strict" | "balanced" | "paranoid">("security.mode", "balanced");
   const scanners: ScannerAdapter[] = [
+    // AST engine first: it owns CWE-78/89/327/338/798 for JS/TS and carries the
+    // evidence trace, so its findings win the dedupe in the orchestrator.
+    new AstSecurityScanner({
+      excludeGlobs,
+      minConfidence: cfg.get<number>("security.minConfidence", 0.7),
+      mode: securityMode,
+    }),
     new PatternScanner(excludeGlobs),
     new SecretsScanner(excludeGlobs),
   ];

@@ -1,0 +1,31 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Type check
+        run: npm run compile-check
+
+      # The precision/recall gate lives inside the test suite
+      # (tests/rules.precision.test.ts and tests/before-after.benchmark.test.ts):
+      # it fails when precision < 90% or recall < 80% on any migrated rule.
+      - name: Tests (includes precision/recall gate)
+        run: npm test
+
+      - name: Bundle
+        run: npm run build

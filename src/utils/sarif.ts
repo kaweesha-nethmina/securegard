@@ -162,7 +162,10 @@ export function toFinalQaReport(data: QaReportData, meta: FinalReportMeta = {}):
   for (const c of data.checklist) {
     out += `- ${c.ok ? "✅" : "❌"} ${c.label}${c.count > 0 ? ` (${c.count})` : ""}\n`;
   }
-  out += `\n${data.checklist.every((c) => c.ok) ? "\n✅ All checks pass — ready to sign off.\n" : "\n❌ ${data.checklist.filter((c) => !c.ok).length} check(s) failing — review before sign-off.\n"}`;
+  const failing = data.checklist.filter((c) => !c.ok).length;
+  out += data.checklist.every((c) => c.ok)
+    ? "\n\u2705 All checks pass \u2014 ready to sign off.\n"
+    : `\n\u274c ${failing} check(s) failing \u2014 review before sign-off.\n`;
   return out;
 }
 
